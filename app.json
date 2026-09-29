@@ -56,8 +56,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "24f59bcf-88fd-4dd0-90a3-4281f62ce11e"
+        "projectId": "cb4fb668-f6f4-4aa7-ac4c-adc55e9b183e"
       }
-    }
+    },
+    "owner": "sherlock182"
   }
 }
