@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ReaderAudioModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.readeraudio.ReaderAudioModule"]
+  }
+}

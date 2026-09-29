@@ -1,0 +1,34 @@
+{
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit",
+    "source.sortMembers": "explicit"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+  "files.exclude": {
+    "node_modules": true,
+    ".expo": true
+  },
+  "search.exclude": {
+    "node_modules": true,
+    ".expo": true
+  },
+  "typescript.tsc.autoDetect": "off",
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+  "typescript.disableAutomaticTypeAcquisition": true,
+  "typescript.enablePromptUseWorkspaceTsdk": false,
+  "typescript.tsserver.log": "off",
+  "typescript.locale": "es",
+  "problems.exclude": {
+    "**/node_modules/**": true,
+    "**/.expo/**": true,
+    "**/build/**": true,
+    "node_modules": true,
+    "**/dist/**": true
+  },
+  "typescript.importsNotUsedAsValues": "error",
+  "typescript.useSeparateSyntaxServer": false,
+  "typescript.tsserver.useSeparateSourceProcessPerProject": false
+}

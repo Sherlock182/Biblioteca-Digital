@@ -1,0 +1,1009 @@
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { PDFLibraryService } from '@/constants/pdf-library-service';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
+
+type PDFBookmark = {
+    id: string;
+    fileUri: string;
+    fileName: string;
+    displayName: string;
+    totalPages: number;
+    createdAt: number;
+    lastOpened: number;
+    currentPage: number;
+    highlights: any[];
+    notes: { [page: number]: string };
+};
+
+export default function PDFReader() {
+    const router = useRouter();
+    const params = useLocalSearchParams();
+    const bookmarkId = Array.isArray(params.bookmarkId)
+        ? params.bookmarkId[0]
+        : (params.bookmarkId as string);
+
+    // ========== STATES ==========
+    const [pdf, setPdf] = useState<PDFBookmark | null>(null);
+    const [pdfBase64, setPdfBase64] = useState<string>('');
+    const [loading, setLoading] = useState(true);
+    const [pdfLoaded, setPdfLoaded] = useState(false);  // Nuevo: cuando PDF se cargó completamente
+    const [audioPlaybackRate, setAudioPlaybackRate] = useState(1);
+    const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+    const [speedMenuVisible, setSpeedMenuVisible] = useState(false);
+    const [currentPageText, setCurrentPageText] = useState('');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(0);
+    const webViewRef = useRef<any>(null);
+    const currentPageRef = useRef(1);  // Track page for pagination
+
+    // ========== LOAD PDF ==========
+    const loadPDF = async () => {
+        console.log('\n📚 Cargando PDF:', bookmarkId);
+        
+        try {
+            if (!bookmarkId) {
+                Alert.alert('Error', 'No PDF selected');
+                router.back();
+                return;
+            }
+
+            const book = await PDFLibraryService.getBook(bookmarkId);
+            if (!book) {
+                Alert.alert('Error', 'PDF not found');
+                router.back();
+                return;
+            }
+
+            console.log('✅ PDF encontrado:', book.displayName);
+            console.log('� Leyendo PDF como ArrayBuffer...');
+            
+            // ✅ NUEVO: Leer como ArrayBuffer (más eficiente que Base64)
+            // Pero usar una función que sea no-blocking
+            let arrayBuffer: ArrayBuffer | null = null;
+            
+            try {
+            // DISABLE: DO NOT read PDF file to avoid stack overflow
+            // const base64 = await PDFStorageService.readPDFAsBase64(book.fileUri);
+                
+            const base64 = '';
+            } catch (readError: any) {
+                console.error('⚠️ Error leyendo PDF:', readError?.message);
+                // Continuar de todos modos, usaremos otro método
+            }
+            
+            setPdf(book);
+            setPdfBase64('');
+            setLoading(false);
+            
+        } catch (error: any) {
+            setLoading(false);
+            Alert.alert('Error', `Load error: ${error?.message}`);
+            router.back();
+        }
+    };
+
+    // ========== EFFECTS ==========
+    useEffect(() => {
+        loadPDF();
+    }, [bookmarkId]);
+
+    // Store webview ready status
+    const webViewReadyRef = useRef(false);
+
+    useEffect(() => {
+        // Hide loading spinner when PDF is ready
+        if (pdf && webViewRef.current && webViewReadyRef.current) {
+            const hideLoadingScript = `
+                const loadingOverlay = document.querySelector('div.loading');
+                if (loadingOverlay) {
+                    loadingOverlay.style.display = 'none';
+                }
+                const container = document.getElementById('pdfContainer');
+                if (container) {
+                    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">Visor PDF (Beta)<br/>' + '${pdf.displayName}' + '<br/>Paginas: ${pdf.totalPages}</div>';
+                }
+                true;
+            `;
+            webViewRef.current?.injectJavaScript(hideLoadingScript);
+        }
+    }, [pdf, webViewReadyRef.current]);
+
+    useEffect(() => {
+        // Keep ref in sync with state
+        currentPageRef.current = currentPage;
+    }, [currentPage]);
+
+    useEffect(() => {
+        return () => {
+            if (webViewRef.current) {
+                webViewRef.current.injectJavaScript('window.stopSpeech(); true;');
+            }
+        };
+    }, []);
+
+    // ========== SYNTHESIZE AUDIO FUNCTION ==========
+    const synthesizeAndPlayAudio = useCallback((textToRead: string, items: any[]) => {
+        try {
+            if (!textToRead || textToRead.trim().length === 0) {
+                Alert.alert('Error', 'No hay texto para reproducir');
+                setIsAudioPlaying(false);
+                return;
+            }
+
+            console.log('🎙️ Playing audio with', items?.length || 0, 'items on page:', currentPageRef.current);
+            setIsAudioPlaying(true);
+
+            if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(`
+                    (function() {
+                        const items = ${JSON.stringify(items || [])};
+                        const text = ${JSON.stringify(textToRead)};
+                        const rate = ${audioPlaybackRate};
+                        
+                        window.speakTextWithHighlight(text, items, rate, function() {
+                            // Callback cuando termina la lectura
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'SPEECH_FINISHED'
+                            }));
+                        });
+                    })();
+                    true;
+                `);
+            }
+        } catch (error: any) {
+            console.error('❌ Error in synthesizeAndPlayAudio:', error);
+            setIsAudioPlaying(false);
+            Alert.alert('Error', error?.message || 'Error desconocido');
+        }
+    }, [audioPlaybackRate]);
+
+    // ========== PLAY BUTTON HANDLER ==========
+    const handlePlayPressed = useCallback(() => {
+        try {
+            if (isAudioPlaying) {
+                if (webViewRef.current) {
+                    webViewRef.current.injectJavaScript('window.stopSpeech(); true;');
+                }
+                setIsAudioPlaying(false);
+                return;
+            }
+
+            setIsAudioPlaying(true);
+
+            if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(`
+                    (async function() {
+                        try {
+                            if (typeof window.getPageText === 'function') {
+                                await window.getPageText();
+                            }
+                        } catch (e) {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'PAGE_TEXT_ERROR',
+                                error: String(e)
+                            }));
+                        }
+                    })();
+                `);
+            } else {
+                setIsAudioPlaying(false);
+                Alert.alert('Error', 'PDF no está listo');
+            }
+        } catch (error: any) {
+            console.error('❌ Error in handlePlayPressed:', error);
+            setIsAudioPlaying(false);
+        }
+    }, [isAudioPlaying]);
+
+    // ========== MESSAGE HANDLER ==========
+    const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
+        try {
+            const message = JSON.parse(event.nativeEvent.data);
+            
+            if (message.type === 'PAGE_TEXT') {
+                console.log('📖 Text received from page:', message.pageNum, 'items:', message.items?.length);
+                if (message.text?.trim()) {
+                    // Pasar directamente a síntesis con highlighting automático
+                    synthesizeAndPlayAudio(message.text, message.items || []);
+                } else {
+                    Alert.alert('Aviso', 'Página sin texto');
+                    setIsAudioPlaying(false);
+                }
+            } else if (message.type === 'SPEECH_FINISHED') {
+                console.log('✅ Speech finished on page:', currentPageRef.current);
+                setIsAudioPlaying(false);
+                
+                // Avanzar a siguiente página
+                const nextPage = currentPageRef.current + 1;
+                if (nextPage <= totalPages && webViewRef.current) {
+                    console.log(`📖 Moving from page ${currentPageRef.current} to ${nextPage}`);
+                    currentPageRef.current = nextPage;
+                    setCurrentPage(nextPage);
+                    
+                    setTimeout(() => {
+                        if (webViewRef.current) {
+                            webViewRef.current.injectJavaScript(`
+                                window.currentPage = ${nextPage};
+                                (async function() {
+                                    try {
+                                        if (typeof window.getPageText === 'function') {
+                                            await window.getPageText();
+                                        }
+                                    } catch (e) {
+                                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                                            type: 'PAGE_TEXT_ERROR',
+                                            error: String(e)
+                                        }));
+                                    }
+                                })();
+                                true;
+                            `);
+                        }
+                    }, 300);
+                } else if (nextPage > totalPages) {
+                    console.log('📚 Reached end of PDF');
+                    Alert.alert('Fin', 'Se ha llegado al final del documento');
+                }
+            } else if (message.type === 'PAGE_TEXT_ERROR') {
+                console.error('❌ Extract error:', message.error);
+                Alert.alert('Error', message.error);
+                setIsAudioPlaying(false);
+            } else if (message.type === 'PDF_LOADED') {
+                console.log('✅ PDF loaded successfully, total pages:', message.totalPages);
+                setTotalPages(message.totalPages || 0);
+                setCurrentPage(1);
+                currentPageRef.current = 1;
+                setPdfLoaded(true);  // Marcar como cargado
+                setLoading(false);   // Ocultar overlay
+            } else if (message.type === 'PDF_ERROR') {
+                console.error('❌ PDF loading error:', message.error);
+                Alert.alert('Error', `No se pudo cargar el PDF: ${message.error}`);
+            }
+        } catch (error) {
+            console.error('❌ Message parse error:', error);
+            setIsAudioPlaying(false);
+        }
+    }, [synthesizeAndPlayAudio, audioPlaybackRate]);
+
+    // ========== CONDITIONAL RENDERING - LOADING ==========
+    if (loading) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <ActivityIndicator size="large" color="#007AFF" />
+            </SafeAreaView>
+        );
+    }
+
+    // ========== CONDITIONAL RENDERING - NO PDF ==========
+    if (!pdf) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <Text style={styles.error}>No se pudo cargar el PDF</Text>
+            </SafeAreaView>
+        );
+    }
+
+    // ========== PDF VIEWER HTML ==========
+    const pdfViewerHTML = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body, html { width: 100%; height: 100%; font-family: Arial, sans-serif; }
+                .pdf-container {
+                    width: 100%;
+                    height: 100%;
+                    overflow: auto;
+                    background: #f5f5f5;
+                    position: relative;
+                }
+                .page {
+                    margin: 10px auto;
+                    background: white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    max-width: 800px;
+                    position: relative;
+                }
+                canvas {
+                    display: block;
+                    width: 100%;
+                    height: auto;
+                }
+                .text-display {
+                    background: white;
+                    padding: 20px;
+                    margin: 10px auto;
+                    max-width: 800px;
+                    font-size: 16px;
+                    line-height: 1.6;
+                    color: #333;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    display: none;
+                }
+                .text-display.visible {
+                    display: block;
+                }
+                .word {
+                    cursor: pointer;
+                }
+                .word.highlight {
+                    background-color: #FFFF00;
+                    font-weight: bold;
+                    padding: 0 2px;
+                    border-radius: 2px;
+                }
+                .highlight-overlay {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    pointer-events: none;
+                }
+                .loading {
+                    text-align: center;
+                    padding: 40px;
+                    color: #666;
+                    font-size: 16px;
+                }
+                .error {
+                    text-align: center;
+                    padding: 40px;
+                    color: #d32f2f;
+                    font-size: 16px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="pdf-container" id="pdfContainer">
+                <div class="loading">Cargando PDF...</div>
+            </div>
+            <script>
+                // Esperar a que PDF.js esté disponible
+                function initPDFJS() {
+                    if (typeof window.pdfjsLib !== 'undefined' && window.pdfjsLib.GlobalWorkerOptions) {
+                        console.log('✅ PDF.js loaded');
+                        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                        return true;
+                    }
+                    return false;
+                }
+                
+                // Intentar inicializar inmediatamente
+                if (!initPDFJS()) {
+                    // Si no está disponible, esperar un poco
+                    setTimeout(initPDFJS, 500);
+                }
+                
+                let pdfDoc = null;
+                window.currentPage = 1;
+                
+                // Variables para tracking de lectura en PDF
+                let currentItems = [];
+                let itemPositions = [];
+                let readingStartTime = 0;
+                let currentItemIndex = -1;
+                let readingAnimationId = null;
+                let wordsPerMinute = 150;
+                let highlightCanvas = null;
+                let highlightCtx = null;
+                let totalTextLength = 0;
+                let charsPerSecond = 0;
+                let charsSaidSoFar = 0;
+                
+                // ========== SISTEMA DE SÍNTESIS CON HIGHLIGHTING SINCRONIZADO ==========
+                let highlightCanvas = null;
+                let highlightCtx = null;
+                let currentSpeechUtterance = null;
+                
+                // Crear canvas overlay para highlighting
+                window.createHighlightCanvas = function() {
+                    // Limpiar canvas anterior
+                    const allCanvases = document.querySelectorAll('.highlight-canvas');
+                    allCanvases.forEach(c => c.remove());
+                    
+                    const pageElement = document.getElementById('page-' + window.currentPage);
+                    if (!pageElement) return null;
+                    
+                    const pdfCanvas = pageElement.querySelector('canvas');
+                    if (!pdfCanvas) return null;
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'highlight-canvas';
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '0';
+                    canvas.style.left = '0';
+                    canvas.style.pointerEvents = 'none';
+                    canvas.style.zIndex = '10';
+                    canvas.width = pdfCanvas.width;
+                    canvas.height = pdfCanvas.height;
+                    
+                    pageElement.appendChild(canvas);
+                    
+                    highlightCanvas = canvas;
+                    highlightCtx = canvas.getContext('2d');
+                    
+                    console.log('✅ Highlight canvas created:', canvas.width, 'x', canvas.height);
+                    return canvas;
+                };
+                
+                // Dibujar highlight de un item
+                window.drawItemHighlight = function(item) {
+                    if (!highlightCtx || !highlightCanvas) return;
+                    
+                    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+                    
+                    if (!item || item.x === undefined || item.y === undefined) return;
+                    
+                    const x = item.x;
+                    const y = item.y;
+                    const w = item.width || 25;
+                    const h = item.height || 15;
+                    
+                    // Fondo amarillo brillante
+                    highlightCtx.fillStyle = 'rgba(255, 255, 0, 0.6)';
+                    highlightCtx.fillRect(x - 2, y - 2, w + 4, h + 4);
+                    
+                    // Borde naranja
+                    highlightCtx.strokeStyle = 'rgba(255, 140, 0, 1)';
+                    highlightCtx.lineWidth = 3;
+                    highlightCtx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+                };
+                
+                // Limpiar highlighting
+                window.clearHighlight = function() {
+                    if (highlightCtx && highlightCanvas) {
+                        highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+                    }
+                };
+                
+                // Función principal de síntesis con highlighting
+                window.speakTextWithHighlight = function(text, items, rate, onFinish) {
+                    console.log('🎙️ Starting speech synthesis with', items.length, 'items');
+                    
+                    // Cancelar cualquier síntesis anterior
+                    window.speechSynthesis.cancel();
+                    
+                    // Crear canvas
+                    window.createHighlightCanvas();
+                    
+                    if (!items || items.length === 0) {
+                        console.warn('No items provided for highlighting');
+                        if (onFinish) onFinish();
+                        return;
+                    }
+                    
+                    // Crear utterance
+                    const utterance = new SpeechSynthesisUtterance();
+                    utterance.text = text;
+                    utterance.lang = 'es-ES';
+                    utterance.rate = rate || 1;
+                    utterance.pitch = 1;
+                    utterance.volume = 1;
+                    
+                    let startTime = 0;
+                    let currentIndex = -1;
+                    let animationId = null;
+                    
+                    // Calcular duraciones estimadas por palabra
+                    // En español: ~1s por 2-3 palabras de promedio
+                    const charCount = text.length;
+                    const wordCount = items.length;
+                    const charsPerSecond = (charCount / (charCount / 12)) * (rate || 1);  // 12 caracteres por 1s es baseline
+                    
+                    // Track timing
+                    utterance.onstart = () => {
+                        console.log('▶️ Speech started');
+                        startTime = Date.now();
+                        
+                        // Iniciar loop de highlighting
+                        const updateHighlight = () => {
+                            const elapsed = (Date.now() - startTime) / 1000;  // segundos
+                            const estimatedCharIndex = Math.min(
+                                Math.floor(elapsed * charsPerSecond),
+                                charCount - 1
+                            );
+                            
+                            // Encontrar qué item corresponde a este índice
+                            let charsSoFar = 0;
+                            let newIndex = 0;
+                            
+                            for (let i = 0; i < items.length; i++) {
+                                charsSoFar += items[i].text.length + 1; // +1 para el espacio
+                                if (estimatedCharIndex <= charsSoFar) {
+                                    newIndex = i;
+                                    break;
+                                }
+                            }
+                            
+                            if (newIndex !== currentIndex && newIndex < items.length) {
+                                currentIndex = newIndex;
+                                window.drawItemHighlight(items[newIndex]);
+                            }
+                            
+                            // Continuar si aún hay más
+                            if (elapsed < (charCount / charsPerSecond) * 1.2) {
+                                animationId = requestAnimationFrame(updateHighlight);
+                            }
+                        };
+                        
+                        animationId = requestAnimationFrame(updateHighlight);
+                    };
+                    
+                    utterance.onend = () => {
+                        console.log('✅ Speech ended');
+                        if (animationId) cancelAnimationFrame(animationId);
+                        window.clearHighlight();
+                        if (onFinish) onFinish();
+                    };
+                    
+                    utterance.onerror = (event) => {
+                        console.error('❌ Speech error:', event.error);
+                        if (animationId) cancelAnimationFrame(animationId);
+                        window.clearHighlight();
+                        if (onFinish) onFinish();
+                    };
+                    
+                    // Iniciar síntesis
+                    window.speechSynthesis.speak(utterance);
+                };
+                
+                // Detener síntesis
+                window.stopSpeech = function() {
+                    window.speechSynthesis.cancel();
+                    window.clearHighlight();
+                    console.log('🛑 Speech stopped');
+                };
+                
+                // Obtener texto de página
+                window.getPageText = async function() {
+                    try {
+                        if (!pdfDoc) {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'PAGE_TEXT_ERROR',
+                                error: 'PDF not loaded'
+                            }));
+                            return;
+                        }
+                        
+                        const page = await pdfDoc.getPage(window.currentPage);
+                        const textContent = await page.getTextContent();
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        
+                        // Extraer texto completo
+                        const text = textContent.items.map(item => item.str || '').join(' ').trim();
+                        
+                        // Extraer items con sus posiciones directamente
+                        const items = textContent.items
+                            .filter(item => item.str && item.str.trim())
+                            .map(item => ({
+                                text: item.str,
+                                x: item.transform[4],           // posición X
+                                y: item.transform[5],           // posición Y
+                                width: item.width,
+                                height: item.height
+                            }));
+                        
+                        if (text) {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'PAGE_TEXT',
+                                pageNum: window.currentPage,
+                                text: text,
+                                items: items,
+                                viewportScale: 1.5
+                            }));
+                        } else {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'PAGE_TEXT_ERROR',
+                                error: 'No text in page'
+                            }));
+                        }
+                    } catch (error) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'PAGE_TEXT_ERROR',
+                            error: error.message
+                        }));
+                    }
+                };
+                
+                // Renderizar página
+                async function renderPage(pageNum) {
+                    const page = await pdfDoc.getPage(pageNum);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    
+                    const wrapper = document.getElementById('page-' + pageNum);
+                    if (!wrapper) return;
+                    
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    
+                    await page.render({
+                        canvasContext: context,
+                        viewport: viewport
+                    }).promise;
+                    
+                    wrapper.innerHTML = '';
+                    wrapper.appendChild(canvas);
+                }
+                
+                // Cargar PDF desde base64 - VERSIÓN SIMPLIFICADA SIN RENDERIZADO
+                window.loadPDFFromBase64 = async function(base64Data) {
+                    console.log('loadPDFFromBase64 - VERSIÓN SIMPLE');
+                    
+                    try {
+                        // SOLO cargar el documento, sin renderizar páginas
+                        console.log('Decodificando base64...');
+                        const binaryString = atob(base64Data);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        console.log('Bytes convertidos');
+
+                        // Cargar con PDF.js
+                        console.log('Cargando documento con PDF.js...');
+                        pdfDoc = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+                        console.log('Documento cargado');
+
+                        // SOLO mostrar mensaje, sin renderizar
+                        const container = document.getElementById('pdfContainer');
+                        if (container) {
+                            container.innerHTML = '<div style="padding: 40px; text-align: center; color: #666; font-size: 18px;">PDF Cargado: ' + pdfDoc.numPages + ' paginas<\/div>';
+                        }
+
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'PDF_LOADED',
+                            totalPages: pdfDoc.numPages
+                        }));
+
+                    } catch (error) {
+                        console.error('Error:', error.message);
+                        if (document.getElementById('pdfContainer')) {
+                            document.getElementById('pdfContainer').innerHTML = '<div class="error">Error: ' + error.message + '<\/div>';
+                        }
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'PDF_ERROR',
+                            error: error.message
+                        }));
+                    }
+                };
+                
+                // ========== CARGAR PDF DESDE URI (Sin conversion a Base64) ==========
+                window.loadPDFFromUri = async function(fileUri) {
+                    console.log('loadPDFFromUri iniciado');
+                    console.log('URI:', fileUri);
+                    
+                    try {
+                        // Paso 1: Hacer fetch del archivo
+                        console.log('Descargando archivo desde URI...');
+                        const response = await fetch(fileUri);
+                        
+                        if (!response.ok) {
+                            throw new Error('Error descargando: ' + response.status);
+                        }
+                        
+                        const arrayBuffer = await response.arrayBuffer();
+                        console.log('Archivo descargado:', arrayBuffer.byteLength, 'bytes');
+
+                        // Paso 2: Cargar con PDF.js
+                        console.log('Cargando documento con PDF.js...');
+                        pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                        console.log('Documento cargado:', pdfDoc.numPages, 'paginas');
+
+                        // Paso 3: Renderizar páginas
+                        console.log('Renderizando paginas...');
+                        const container = document.getElementById('pdfContainer');
+                        if (!container) throw new Error('Container not found');
+                        container.innerHTML = '';
+
+                        const pagesToRender = Math.min(pdfDoc.numPages, 20);
+                        for (let i = 1; i <= pagesToRender; i++) {
+                            const div = document.createElement('div');
+                            div.id = 'page-' + i;
+                            div.className = 'page';
+                            container.appendChild(div);
+                            console.log('[' + i + '/' + pagesToRender + '] Renderizando...');
+                            await renderPage(i);
+                            console.log('[' + i + '/' + pagesToRender + '] OK');
+                        }
+
+                        console.log('PDF cargado exitosamente');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'PDF_LOADED',
+                            totalPages: pdfDoc.numPages
+                        }));
+
+                    } catch (error) {
+                        console.error('Error en loadPDFFromUri:', error.message);
+                        document.getElementById('pdfContainer').innerHTML = '<div class="error">Error: ' + error.message + '<\/div>';
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'PDF_ERROR',
+                            error: error.message
+                        }));
+                    }
+                };
+                
+                // Notificar inicialización del HTML via console
+                console.log('🚀 PDF WebView HTML initialized and ready for PDF injection');
+                
+                // Variable para guardar el PDF data (será poblada por React Native)
+                window.__pdfData = null;
+            <\/script>
+        </body>
+        </html>
+    `;
+
+    return (
+        <>
+            <Stack.Screen options={{ headerShown: false }} />
+            <SafeAreaView style={styles.container}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <Pressable onPress={() => router.back()}>
+                        <IconSymbol name="chevron.left" size={24} color="#8B6F47" />
+                    </Pressable>
+                    <Text style={styles.headerTitle} numberOfLines={1}>
+                        {pdf.displayName} ({currentPage}/{totalPages})
+                    </Text>
+                    <View style={{ width: 24 }} />
+                </View>
+
+                {/* PDF Viewer */}
+                <WebView
+                    ref={webViewRef}
+                    source={{
+                        html: pdfViewerHTML,
+                    } as any}
+                    startInLoadingState={true}
+                    renderLoading={() => (
+                        <View style={styles.loadingOverlay}>
+                            <ActivityIndicator size="large" color="#8B6F47" />
+                            <Text style={{ marginTop: 12 }}>Cargando PDF...</Text>
+                        </View>
+                    )}
+                    onLoadEnd={() => {
+                        console.log('🌐 WebView DOM loaded');
+                        setTimeout(() => {
+                            webViewReadyRef.current = true;
+                            console.log('✅ WebView ready');
+                        }, 500);
+                    }}
+                    onError={(error) => {
+                        console.error('❌ WebView error:', error.nativeEvent);
+                    }}
+                    onMessage={handleWebViewMessage}
+                    javaScriptEnabled={true}
+                    allowFileAccess={true}
+                    allowFileAccessFromFileURLs={true}
+                    allowUniversalAccessFromFileURLs={true}
+                    mixedContentMode="always"
+                    scalesPageToFit={true}
+                />
+
+                {/* Footer con Controles de Audio */}
+                <View style={styles.audioFooter}>
+                    {/* Fila 1: Play/Pause + Velocidad + Navegación */}
+                    <View style={styles.audioControlsRow}>
+                        <Pressable
+                            onPress={handlePlayPressed}
+                            style={styles.playButton}
+                            hitSlop={12}
+                        >
+                            <Text style={styles.playButtonText}>
+                                {isAudioPlaying ? '⏸ PAUSA' : '▶ PLAY'}
+                            </Text>
+                        </Pressable>
+
+                        <View style={styles.speedControlContainer}>
+                            <Text style={styles.speedLabel}>Vel.</Text>
+                            <Pressable
+                                onPress={() => setSpeedMenuVisible(!speedMenuVisible)}
+                                style={styles.speedButton}
+                                hitSlop={8}
+                            >
+                                <Text style={styles.speedButtonText}>{audioPlaybackRate}x</Text>
+                            </Pressable>
+                        </View>
+
+                        {/* Speed Menu */}
+                        {speedMenuVisible && (
+                            <View style={styles.speedMenu}>
+                                {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                                    <Pressable
+                                        key={rate}
+                                        onPress={() => {
+                                            setAudioPlaybackRate(rate);
+                                            setSpeedMenuVisible(false);
+                                        }}
+                                        style={[
+                                            styles.speedOption,
+                                            audioPlaybackRate === rate && styles.speedOptionActive,
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.speedOptionText,
+                                                audioPlaybackRate === rate && styles.speedOptionTextActive,
+                                            ]}
+                                        >
+                                            {rate}x
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                        )}
+
+                        <Pressable style={styles.blockNavButton} hitSlop={8}>
+                            <Text style={styles.blockNavText}>⏮ A</Text>
+                        </Pressable>
+
+                        <Pressable style={styles.blockNavButton} hitSlop={8}>
+                            <Text style={styles.blockNavText}>S ⏭</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            </SafeAreaView>
+        </>
+    );
+}
+
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#F8F9FA',
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: '#FFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E8E8E8',
+    },
+    headerTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#8B6F47',
+        flex: 1,
+        textAlign: 'center',
+    },
+    loadingOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    audioFooter: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        backgroundColor: '#FFF9E6',
+        borderTopWidth: 2,
+        borderTopColor: '#E7B788',
+        gap: 8,
+    },
+    audioControlsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+    },
+    playButton: {
+        backgroundColor: '#E7B788',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    playButtonText: {
+        color: '#FFF',
+        fontWeight: '700',
+        fontSize: 13,
+        letterSpacing: 0.5,
+    },
+    speedControlContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#FFF',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: '#E8E8E8',
+    },
+    speedLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#666',
+    },
+    speedButton: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        backgroundColor: '#E7B788',
+        borderRadius: 4,
+    },
+    speedButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#FFF',
+    },
+    speedMenu: {
+        position: 'absolute',
+        top: -145,
+        backgroundColor: '#FFF',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E8E8E8',
+        overflow: 'hidden',
+        zIndex: 1000,
+    },
+    speedOption: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    speedOptionActive: {
+        backgroundColor: '#E7B788',
+    },
+    speedOptionText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#666',
+        textAlign: 'center',
+    },
+    speedOptionTextActive: {
+        color: '#FFF',
+        fontWeight: '700',
+    },
+    blockNavButton: {
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        backgroundColor: '#8B6F47',
+        borderRadius: 4,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    blockNavText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#FFF',
+    },
+    footer: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: '#FFF',
+        borderTopWidth: 1,
+        borderTopColor: '#E8E8E8',
+        alignItems: 'center',
+    },
+    footerText: {
+        fontSize: 12,
+        color: '#666',
+    },
+    error: {
+        fontSize: 16,
+        color: '#FF3B30',
+        textAlign: 'center',
+        marginTop: 20,
+    },
+});

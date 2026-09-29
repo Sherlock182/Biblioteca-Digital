@@ -1,0 +1,65 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# ---- Only for EAS uploads (EAS uses this file instead of .gitignore) ----
+# Old builds and build tools: not needed to create the app, and they make the upload huge.
+*.apk
+*.aab
+aab_temp/
+bundletool.jar
+java.zip
+# Signing keys must never be uploaded.
+debug.keystore
+*.keystore
+# Local logs and reports.
+*.log
+build-output.txt
+expo-output.txt
+prebuild-output.txt
+# Bible data no longer loaded by the app (the app uses biblia-nbv.json and biblia-catolica-platense.json).
+assets/data/bible-rv.json
+assets/data/catolica-deutero.json
+assets/data/tanakh-hebrew.json
+assets/data/tanakh-hebrew-v2.json
+assets/data/quran-es-asad.json

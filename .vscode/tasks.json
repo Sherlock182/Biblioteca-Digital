@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Iniciar app Expo",
+			"type": "shell",
+			"command": "npx expo start",
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}
