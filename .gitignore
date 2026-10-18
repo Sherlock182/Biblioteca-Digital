@@ -58,3 +58,6 @@ prebuild-output.txt
 
 # Third-party book text, not used by the app
 Historia del mundo angélico.json
+
+# Damaged copy of node_modules left from a reinstall.
+node_modules_dañado/

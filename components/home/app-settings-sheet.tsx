@@ -1,6 +1,10 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { AppTheme, mergeStyles, TEXT_SIZES, THEMES, useAppSettings } from '@/constants/app-settings';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Sheet } from '@/components/ui/sheet';
+import { AppInfoSheet } from '@/components/home/app-info-sheet';
+import { AppTheme, GARAMOND, mergeStyles, READER_FONTS, TEXT_SIZES, THEMES, useAppSettings, VERSE_LAYOUTS } from '@/constants/app-settings';
+import { useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: undefined });
 
@@ -15,17 +19,22 @@ function sheetTheme(theme: AppTheme) {
       theme: { backgroundColor: ui.card, borderColor: ui.border }, themeActive: { borderColor: ui.primary, backgroundColor: ui.soft },
       themeName: { color: ui.text }, themeDescription: { color: ui.muted },
       size: { backgroundColor: ui.card, borderColor: ui.border }, sizeActive: { borderColor: ui.primary, backgroundColor: ui.primary },
+      choice: { backgroundColor: ui.card, borderColor: ui.border }, choiceTitle: { color: ui.text },
       sizeLetter: { color: ui.text }, sizeLabel: { color: ui.muted }, sizeTextActive: { color: ui.primaryText },
       preview: { borderColor: ui.border }, note: { color: ui.muted },
+      about: { backgroundColor: ui.card, borderColor: ui.border }, aboutText: { color: ui.text },
     }),
   };
 }
 
 export function AppSettingsSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { settings, theme, setTheme, setTextScale } = useAppSettings();
+  const { settings, theme, setTheme, setTextScale, setReaderFont, setVerseLayout } = useAppSettings();
   const reader = theme.reader;
+  const previewFont = settings.readerFont === 'libro' ? { fontFamily: GARAMOND.regular } : null;
   const { styles, accent, idle } = sheetTheme(theme);
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+  const insets = useSafeAreaInsets();
+  const [infoOpen, setInfoOpen] = useState(false);
+  return <Sheet visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClose}>
     <Pressable style={styles.backdrop} accessibilityLabel="Cerrar ajustes" onPress={onClose} />
     <View style={styles.sheet}>
       <View style={styles.header}>
@@ -34,7 +43,7 @@ export function AppSettingsSheet({ visible, onClose }: { visible: boolean; onClo
           <MaterialIcons name="close" size={22} color={accent} />
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView style={styles.scroll} contentContainerStyle={[styles.body, { paddingBottom: 34 + insets.bottom }]}>
         <Text style={styles.section}>TEMA</Text>
         {THEMES.map(item => {
           const active = item.id === settings.themeId;
@@ -68,16 +77,61 @@ export function AppSettingsSheet({ visible, onClose }: { visible: boolean; onClo
             </Pressable>;
           })}
         </View>
+        <Text style={[styles.section, styles.sectionSpaced]}>LETRA DE LA BIBLIA</Text>
+        <View style={styles.sizes}>
+          {READER_FONTS.map(font => {
+            const active = font.id === settings.readerFont;
+            return <Pressable key={font.id} accessibilityRole="radio" accessibilityState={{ checked: active }} accessibilityLabel={'Letra ' + font.label}
+              onPress={() => setReaderFont(font.id)} style={({ pressed }) => [styles.choice, active && styles.sizeActive, pressed && styles.pressed]}>
+              <Text style={[styles.choiceTitle, { fontFamily: font.id === 'libro' ? GARAMOND.regular : SERIF }, active && styles.sizeTextActive]}>{font.label}</Text>
+              <Text style={[styles.sizeLabel, active && styles.sizeTextActive]} numberOfLines={1}>{font.description}</Text>
+            </Pressable>;
+          })}
+        </View>
+
+        <Text style={[styles.section, styles.sectionSpaced]}>FORMA DE LECTURA</Text>
+        <View style={styles.sizes}>
+          {VERSE_LAYOUTS.map(layout => {
+            const active = layout.id === settings.verseLayout;
+            return <Pressable key={layout.id} accessibilityRole="radio" accessibilityState={{ checked: active }} accessibilityLabel={'Lectura ' + layout.label}
+              onPress={() => setVerseLayout(layout.id)} style={({ pressed }) => [styles.choice, active && styles.sizeActive, pressed && styles.pressed]}>
+              <MaterialIcons name={layout.id === 'parrafo' ? 'notes' : 'format-list-numbered'} size={20} color={active ? (theme.id === 'clasico' ? '#FFF' : theme.ui.primaryText) : accent} />
+              <Text style={[styles.choiceTitle, active && styles.sizeTextActive]}>{layout.label}</Text>
+              <Text style={[styles.sizeLabel, active && styles.sizeTextActive]} numberOfLines={1}>{layout.description}</Text>
+            </Pressable>;
+          })}
+        </View>
+
+        {/* Preview of the reader with every choice above. */}
         <View style={[styles.preview, { backgroundColor: reader.page }]}>
-          <Text style={[styles.previewNumber, { color: reader.number, fontSize: 15 * settings.textScale, lineHeight: 30 * settings.textScale }]}>1</Text>
-          <Text style={[styles.previewText, { color: reader.text, fontSize: 18 * settings.textScale, lineHeight: 30 * settings.textScale }]}>
-            En el principio creó Dios los cielos y la tierra.
-          </Text>
+          {settings.verseLayout === 'parrafo' ? (
+            <Text style={[styles.previewText, previewFont, { color: reader.text, fontSize: 18 * settings.textScale, lineHeight: 30 * settings.textScale }]}>
+              <Text style={{ color: reader.number, fontSize: 11 * settings.textScale, fontWeight: '700' }}>1 </Text>
+              En el principio creó Dios los cielos y la tierra.{' '}
+              <Text style={{ color: reader.number, fontSize: 11 * settings.textScale, fontWeight: '700' }}>2 </Text>
+              Y la tierra estaba desordenada y vacía…
+            </Text>
+          ) : <>
+            <Text style={[styles.previewNumber, { color: reader.number, fontSize: 15 * settings.textScale, lineHeight: 30 * settings.textScale }]}>1</Text>
+            <Text style={[styles.previewText, previewFont, { color: reader.text, fontSize: 18 * settings.textScale, lineHeight: 30 * settings.textScale }]}>
+              En el principio creó Dios los cielos y la tierra.
+            </Text>
+          </>}
         </View>
         <Text style={styles.note}>Solo cambia el texto de las Biblias. El lector de PDF mantiene su propio zoom.</Text>
+
+        <Text style={[styles.section, styles.sectionSpaced]}>INFORMACIÓN</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Acerca de la app" onPress={() => setInfoOpen(true)}
+          style={({ pressed }) => [styles.about, pressed && styles.pressed]}>
+          <MaterialIcons name="info-outline" size={22} color={accent} />
+          <Text style={styles.aboutText}>Acerca de la app</Text>
+          <MaterialIcons name="chevron-right" size={22} color={idle} />
+        </Pressable>
       </ScrollView>
     </View>
-  </Modal>;
+    {/* Nested so it opens on top of the settings sheet and returns to it when closed. */}
+    <AppInfoSheet visible={infoOpen} onClose={() => setInfoOpen(false)} />
+  </Sheet>;
 }
 
 const baseStyles = StyleSheet.create({
@@ -86,6 +140,7 @@ const baseStyles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 },
   title: { flex: 1, fontSize: 20, fontWeight: '800', color: '#30271F' },
   close: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  scroll: { flexShrink: 1 },
   body: { padding: 20, paddingTop: 8, paddingBottom: 34, gap: 10 },
   section: { fontSize: 11, fontWeight: '800', letterSpacing: 1.4, color: '#876B50' },
   sectionSpaced: { marginTop: 12 },
@@ -110,6 +165,11 @@ const baseStyles = StyleSheet.create({
     backgroundColor: '#FFFDF9', borderWidth: 1.5, borderColor: '#E5DCCF',
   },
   sizeActive: { borderColor: '#65482F', backgroundColor: '#65482F' },
+  choice: {
+    flex: 1, minHeight: 64, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 6,
+    backgroundColor: '#FFFDF9', borderWidth: 1.5, borderColor: '#E5DCCF',
+  },
+  choiceTitle: { fontSize: 16, fontWeight: '700', color: '#4A3625' },
   sizeLetter: { fontWeight: '800', color: '#4A3625', fontFamily: SERIF },
   sizeLabel: { fontSize: 9, color: '#7C6B58', fontWeight: '600' },
   sizeTextActive: { color: '#FFF' },
@@ -117,4 +177,9 @@ const baseStyles = StyleSheet.create({
   previewNumber: { fontWeight: '700', fontFamily: SERIF },
   previewText: { flex: 1, fontFamily: SERIF },
   note: { fontSize: 12, color: '#7C6B58', lineHeight: 18 },
+  about: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16,
+    backgroundColor: '#FFFDF9', borderWidth: 1.5, borderColor: '#E5DCCF',
+  },
+  aboutText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#30271F' },
 });

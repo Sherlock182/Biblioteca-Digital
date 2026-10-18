@@ -6,9 +6,10 @@ import { ReaderAudio } from '@/modules/reader-audio';
 import { loadSpanishVoices, loadSpeechSettings, saveSpeechSettings, speakWithFallback } from '@/constants/speech-engine';
 import { DEFAULT_SPEECH_SETTINGS, pickVoice, SpeechSettings } from '@/constants/speech-voices';
 import { VoiceSettingsSheet } from '@/components/voice-settings-sheet';
-import { getLocalFileSize, MAX_PDF_BYTES } from '@/constants/pdf-storage-service';
+import { getLocalFileSize, MAX_PDF_BYTES, resolveOwnedPDFUri } from '@/constants/pdf-storage-service';
 import { isViewerNavigation, loadPDFViewerSource, PDFViewerSource, sendPDFData } from '@/constants/pdf-webview-bridge';
 import { readFileAsBase64Safe } from '@/constants/safe-file-reader';
+import { StatusBar } from 'expo-status-bar';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -201,16 +202,17 @@ export default function PDFReader() {
     setStatus('loading'); setError(''); setSource(null); setNotice(''); setTransfer(0);
     setZoom(1); injected.current = false; stopSpeech();
     const timeout = setTimeout(() => {
-      if (!cancelled) { cancelled = true; setError('La preparación tardó demasiado. Revisa la conexión con Expo y vuelve a intentarlo.'); setStatus('error'); }
+      if (!cancelled) { cancelled = true; setError('La preparación del documento tardó demasiado. Vuelve a intentarlo.'); setStatus('error'); }
     }, 45000);
     void (async () => {
       if (Platform.OS === 'web') throw new Error('Abre este lector en Expo Go para Android o iPhone.');
       if (!id) throw new Error('Selecciona un documento desde tu biblioteca.');
       const saved = await PDFLibraryService.getBook(id);
       if (!saved) throw new Error('Este documento ya no está en tu biblioteca.');
-      const size = await getLocalFileSize(saved.fileUri);
+      const fileUri = resolveOwnedPDFUri(saved.fileUri);
+      const size = await getLocalFileSize(fileUri);
       if (size !== null && size > MAX_PDF_BYTES) throw new Error('Este documento supera 40 MB. Importa una copia más pequeña.');
-      const [base64, viewerSource] = await Promise.all([readFileAsBase64Safe(saved.fileUri), loadPDFViewerSource()]);
+      const [base64, viewerSource] = await Promise.all([readFileAsBase64Safe(fileUri), loadPDFViewerSource()]);
       if (cancelled) return;
       initialPage.current = Number.isInteger(saved.currentPage) && saved.currentPage > 0 ? saved.currentPage : 1;
       data.current = base64;
@@ -328,6 +330,8 @@ export default function PDFReader() {
       backgroundBroken.current = true;
       background.current = null;
       inject('window.cancelPageTexts()');
+      // It may have started and failed later: silence it so the two voices never overlap.
+      void audio.stop().catch(() => undefined);
       setNotice('No se pudo leer en segundo plano (' + errorText(cause) + '). Se leerá con la app abierta.');
       requestSpeech(pages[0]?.page ?? pageRef.current, reading.session);
     });
@@ -407,6 +411,7 @@ export default function PDFReader() {
     : transfer > 0 && transfer < 1 ? 'Cargando documento… ' + Math.round(transfer * 100) + '%' : 'Abriendo la página…';
   return <>
     <Stack.Screen options={{ headerShown: false }} />
+    <StatusBar style={appTheme.ui.statusBar} />
     <SafeAreaView style={styles.screen}>
       <View style={styles.header}>
         <Button title="‹ Biblioteca" onPress={back} />

@@ -35,7 +35,13 @@ import java.util.Locale
 
 data class ReaderItem(val page: Int, val text: String, val paragraphEnd: Boolean)
 
-data class ReaderConfig(val session: Int, val title: String, val voiceId: String?, val rate: Float, val pitch: Float)
+data class ReaderConfig(val session: Int, val title: String, val voiceId: String?, val rate: Float, val pitch: Float, val pageMode: String = "page") {
+  /** What the notification shows for a position: a PDF page, or chapter and verse of the Bible. */
+  fun label(page: Int): String = if (pageMode == "bible") {
+    val chapter = page / 1000; val verse = page % 1000
+    if (verse > 0) "Capítulo $chapter · versículo $verse" else "Capítulo $chapter"
+  } else "Página $page"
+}
 
 /**
  * Foreground media service that owns the whole reading queue, so speech keeps going with the
@@ -70,7 +76,13 @@ class ReaderAudioService : Service(), TextToSpeech.OnInitListener {
       pendingItems = items.toMutableList()
       pendingComplete = complete
       val intent = Intent(context, ReaderAudioService::class.java).setAction(ACTION_START)
-      ContextCompat.startForegroundService(context, intent)
+      try {
+        ContextCompat.startForegroundService(context, intent)
+      } catch (error: Throwable) {
+        pendingConfig = null
+        pendingItems = null
+        throw error
+      }
     }
 
     /** Main thread only. Appends to the session that is starting or already playing. */
@@ -166,7 +178,18 @@ class ReaderAudioService : Service(), TextToSpeech.OnInitListener {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     // A service started with startForegroundService must call startForeground promptly, every time.
-    goForeground()
+    try {
+      goForeground()
+    } catch (_: Throwable) {
+      // The system refused the foreground service: stop cleanly and let the app read with the screen on.
+      val refused = pendingConfig?.session ?: config.session
+      pendingConfig = null
+      pendingItems = null
+      emit("onError", mapOf("message" to "Android no permitió leer en segundo plano. Vuelve a tocar «Escuchar» con la app abierta."))
+      emit("onState", mapOf("playing" to false, "stopped" to true, "session" to refused))
+      stopSelf()
+      return START_NOT_STICKY
+    }
     when (intent?.action) {
       ACTION_START -> {
         val newConfig = pendingConfig
@@ -435,7 +458,7 @@ class ReaderAudioService : Service(), TextToSpeech.OnInitListener {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(if (playing) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause)
       .setContentTitle(config.title.ifBlank { "Lectura en voz alta" })
-      .setContentText(if (page != null) "Página $page" + (if (playing) "" else " · En pausa") else "Preparando lectura…")
+      .setContentText(if (page != null) config.label(page) + (if (playing) "" else " · En pausa") else "Preparando lectura…")
       .setContentIntent(launch)
       .setDeleteIntent(actionIntent(ACTION_STOP, 4))
       .setOngoing(playing)
@@ -449,7 +472,7 @@ class ReaderAudioService : Service(), TextToSpeech.OnInitListener {
         if (playing) "Pausar" else "Continuar",
         actionIntent(if (playing) ACTION_PAUSE else ACTION_PLAY, 1)
       )
-      .addAction(android.R.drawable.ic_media_next, "Siguiente página", actionIntent(ACTION_NEXT, 2))
+      .addAction(android.R.drawable.ic_media_next, if (config.pageMode == "bible") "Siguiente versículo" else "Siguiente página", actionIntent(ACTION_NEXT, 2))
       .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Detener", actionIntent(ACTION_STOP, 3))
       .setStyle(
         androidx.media.app.NotificationCompat.MediaStyle()
@@ -488,7 +511,7 @@ class ReaderAudioService : Service(), TextToSpeech.OnInitListener {
     media.setMetadata(
       MediaMetadataCompat.Builder()
         .putString(MediaMetadataCompat.METADATA_KEY_TITLE, config.title.ifBlank { "Lectura en voz alta" })
-        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, if (lastPage > 0) "Página $lastPage" else "")
+        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, if (lastPage > 0) config.label(lastPage) else "")
         .build()
     )
   }

@@ -1,10 +1,12 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Sheet } from '@/components/ui/sheet';
 import { IOS_VOICE_STEPS, loadSpanishVoices, openVoiceInstaller, speakUtterance } from '@/constants/speech-engine';
 import { pickVoice, PITCH_RANGE, RankedVoice, RATE_RANGE, SpeechSettings } from '@/constants/speech-voices';
 import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppTheme, mergeStyles, useAppSettings } from '@/constants/app-settings';
 import { isBackgroundReadingAvailable } from '@/modules/reader-audio';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 const SAMPLE = 'Hola. Así sonará la lectura de tus documentos.';
 
@@ -84,15 +86,16 @@ export function VoiceSettingsSheet({ visible, settings, onChange, onClose }: {
     void refresh();
   };
 
+  const insets = useSafeAreaInsets();
   const selected = voices ? pickVoice(voices, settings.voiceId) : null;
   const hasEnhanced = !!voices?.some(voice => voice.enhanced);
   const change = (patch: Partial<SpeechSettings>) => onChange({ ...settings, ...patch });
   const round = (value: number) => Math.round(value * 100) / 100;
   const pitchLabel = settings.pitch === 1 ? 'Normal' : settings.pitch < 1 ? 'Más grave' : 'Más agudo';
 
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+  return <Sheet visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={close}>
     <Pressable style={styles.backdrop} accessibilityLabel="Cerrar ajustes de voz" onPress={close} />
-    <View style={styles.sheet}>
+    <View style={[styles.sheet, { paddingBottom: 28 + insets.bottom }]}>
       <View style={styles.header}>
         <Text style={styles.title}>Ajustes de voz</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Cerrar" onPress={close} style={styles.close}><Text style={styles.closeText}>✕</Text></Pressable>
@@ -149,7 +152,7 @@ export function VoiceSettingsSheet({ visible, settings, onChange, onClose }: {
       {!!help && <Text style={styles.help}>{help}</Text>}
       </ScrollView>
     </View>
-  </Modal>;
+  </Sheet>;
 }
 
 const baseStyles = StyleSheet.create({
@@ -161,7 +164,7 @@ const baseStyles = StyleSheet.create({
   closeText: { fontSize: 18, color: '#65482F' },
   section: { fontSize: 11, fontWeight: '700', letterSpacing: 1.4, color: '#876B50' },
   loading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
-  body: { flexGrow: 0 }, bodyContent: { gap: 10, paddingBottom: 8 }, listContent: { gap: 8 },
+  body: { flexGrow: 0, flexShrink: 1 }, bodyContent: { gap: 10, paddingBottom: 8 }, listContent: { gap: 8 },
   muted: { color: '#6C5D4E', fontSize: 13, lineHeight: 19 },
   voice: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFDF9', borderRadius: 14, borderWidth: 1, borderColor: '#E5DCCF' },
   voiceActive: { borderColor: '#65482F', backgroundColor: '#F3EBDD' },

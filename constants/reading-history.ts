@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { seedDefaultPDFs } from './default-pdfs';
 import { PDFLibraryService } from './pdf-library-service';
 
 // Collections on the shelf; a saved reading of a removed collection (the old TaNakh) is ignored.
@@ -18,6 +19,8 @@ const ACCENTED: Record<string, string> = {
   '1 Cronicas': '1 Crónicas', '2 Cronicas': '2 Crónicas', Nehemias: 'Nehemías', Eclesiastes: 'Eclesiastés',
   Isaias: 'Isaías', Jeremias: 'Jeremías', Amos: 'Amós', Abdias: 'Abdías', Jonas: 'Jonás', Nahum: 'Nahúm',
   Sofonias: 'Sofonías', Zacarias: 'Zacarías', Malaquias: 'Malaquías', Galatas: 'Gálatas', Filemon: 'Filemón',
+  // Catholic books (the Platense data uses these spellings).
+  Sabiduria: 'Sabiduría', Ecclesiastico: 'Eclesiástico',
 };
 export const displayBookName = (book: string) => ACCENTED[book] ?? book;
 
@@ -50,6 +53,7 @@ async function loadPdfReading(): Promise<PdfReading | null> {
 
 /** The most recent reading across the Bibles and the PDF library, plus the PDF count for the shelf. */
 export async function loadLastReadings(): Promise<{ bible: BibleReading | null; latest: LastReading | null; pdfCount: number }> {
+  await seedDefaultPDFs();
   const [bible, pdf, pdfCount] = await Promise.all([
     loadBibleReading(),
     loadPdfReading(),

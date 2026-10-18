@@ -405,9 +405,44 @@ test('Nueva Biblia Viva is complete and different from the RV1960', () => {
   assert.deepEqual(Object.keys(nbv).sort(), [...books].sort());
   for (const book of books) assert.equal(nbv[book].length, chapterCounts[book], book);
   assert.equal(countVerses(nbv), 29102);
+  // "»" opens a new paragraph of Jesus' words, which began in 3:10 (Spanish typography, as in the source).
   assert.equal(nbv.Juan[2][15], '»Dios amó tanto al mundo, que dio a su único Hijo, para que todo el que cree en él no se pierda, sino tenga vida eterna.');
   assert.equal(nbv.Salmos[22][0], 'El Señor es mi pastor, nada me falta.');
-  assert.match(nbv.Numeros[1][2], /^La ubicación de las tribus: Judá, Naasón \(hijo de Aminadab\), Al este del santuario, 74\.600\. Isacar/, 'tables read as sentences');
+  assert.match(nbv.Numeros[1][2], /^La ubicación de las tribus:\nJudá: Naasón \(hijo de Aminadab\), Al este del santuario, 74\.600\nIsacar/, 'one line per table row');
+  // The source's «» quotes are kept (removing them glued sentences together: "rumores.No").
+  assert.equal(nbv.Exodo[22][0], '»No acepten falsos rumores. »No cooperen con el malvado apoyando su testimonio, cuando sepan que es falso.');
+  assert.match(nbv.Exodo[16][14], /«El Señor-Nisí»/);
+  const text = Object.values(nbv).flat(2).filter(Boolean).join('\n');
+  assert(!/[,;:.!?][A-Za-zÁÉÍÓÚÑáéíóúñ¿¡«]/.test(text), 'no words glued after punctuation');
+  assert(!/ [,.;:!?)”]|[(¿¡«“] /.test(text), 'no stray spaces around punctuation');
+  assert(!/\ba el Señor\b/.test(text), '"al Señor", not "a el Señor"');
+});
+test('RV1960 headings stand above verses of the app text', () => {
+  const titles = readBible('rv1960-titulos.json');
+  assert.deepEqual(titles.Genesis['1:1'], { h: [['S', 'La creación']] });
+  assert.deepEqual(titles.Salmos['3:1'].h.map(([kind]) => kind), ['S', 'D'], 'section heading, then the psalm title');
+  assert.deepEqual(titles.Salmos['119:9'], { h: [['P', 'Bet']] });
+  const chapters = appBookLists().chapterCounts;
+  for (const [book, entries] of Object.entries(titles)) for (const key of Object.keys(entries)) {
+    const [chapter] = key.split(':').map(Number);
+    assert(chapter >= 1 && chapter <= chapters[book], 'título fuera del libro: ' + book + ' ' + key);
+  }
+});
+test('Nueva Biblia Viva headings are attached to existing verses', () => {
+  const nbv = readBible('biblia-nbv.json');
+  const titles = readBible('nbv-titulos.json');
+  assert.deepEqual(titles.Genesis['11:1'], { h: [['S', 'La torre de Babel']] });
+  assert.deepEqual(titles.Salmos['3:1'], { h: [['D', 'Salmo de David, cuando huía de su hijo Absalón.']] });
+  assert.deepEqual(titles.Cantares['1:2'].h.map(([kind]) => kind), ['M', 'P'], 'Song of Songs: canto and who speaks');
+  // The 68 translator's notes, placed by their own reference (a verse inside a range goes to its start).
+  const notes = Object.values(titles).flatMap(book => Object.values(book)).flatMap(entry => entry.n ?? []);
+  assert.equal(notes.length, 68);
+  assert.deepEqual(titles.Genesis['2:23'].n, [['23', 'En el original la palabra «mujer» y «hombre» vienen de la misma raíz.']]);
+  assert(!notes.some(([, text]) => text.includes('\\')), 'no USFM markup left in notes');
+  for (const [book, entries] of Object.entries(titles)) for (const key of Object.keys(entries)) {
+    const [chapter, verse] = key.split(':').map(Number);
+    assert(typeof nbv[book]?.[chapter - 1]?.[verse - 1] === 'string', 'título sin versículo: ' + book + ' ' + key);
+  }
 });
 test('Catholic Bible is the Platense (Straubinger) with the full Catholic canon', () => {
   const { catholic } = appBookLists();
@@ -434,8 +469,13 @@ test('saved app settings are validated', () => {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React } }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, require: name => name === 'react' ? { createContext: () => ({}) } : {} });
-  assert.deepEqual({ ...exports.sanitizeAppSettings({ themeId: 'noche', textScale: 1.3 }) }, { themeId: 'noche', textScale: 1.3 });
-  assert.deepEqual({ ...exports.sanitizeAppSettings({ themeId: 'rosa', textScale: 7 }) }, { themeId: 'clasico', textScale: 1 });
+  assert.deepEqual({ ...exports.sanitizeAppSettings({ themeId: 'noche', textScale: 1.3, readerFont: 'libro', verseLayout: 'parrafo' }) },
+    { themeId: 'noche', textScale: 1.3, readerFont: 'libro', verseLayout: 'parrafo' });
+  // Unknown or missing values fall back to the defaults (settings saved before these options existed).
+  assert.deepEqual({ ...exports.sanitizeAppSettings({ themeId: 'rosa', textScale: 7 }) },
+    { themeId: 'clasico', textScale: 1, readerFont: 'clasica', verseLayout: 'versiculos' });
+  assert.deepEqual({ ...exports.sanitizeAppSettings({ readerFont: 'comic', verseLayout: 'tabla' }) },
+    { themeId: 'clasico', textScale: 1, readerFont: 'clasica', verseLayout: 'versiculos' });
   assert.equal(exports.THEMES.length, 5);
   assert.equal(exports.THEMES[0].reader.page, '#F6EFD2', 'the classic theme keeps the original reader colors');
 });

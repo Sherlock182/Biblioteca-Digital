@@ -8,6 +8,8 @@ struct ReaderStartOptions: Record {
   @Field var voiceId: String? = nil
   @Field var rate: Double = 1
   @Field var pitch: Double = 1
+  // "page" (PDF) or "bible": pages are chapter * 1000 + verse.
+  @Field var pageMode: String = "page"
 }
 
 struct ReaderBatch: Record {
@@ -74,6 +76,7 @@ final class ReaderAudioPlayer: NSObject, AVSpeechSynthesizerDelegate {
   private var playing = false
   private var session = 0
   private var title = ""
+  private var pageMode = "page"
   private var voiceId: String?
   private var rate: Float = 1
   private var pitch: Float = 1
@@ -96,6 +99,7 @@ final class ReaderAudioPlayer: NSObject, AVSpeechSynthesizerDelegate {
     synthesizer.stopSpeaking(at: .immediate)
     session = options.session
     title = options.title
+    pageMode = options.pageMode
     voiceId = options.voiceId
     rate = Float(options.rate)
     pitch = Float(options.pitch)
@@ -266,7 +270,11 @@ final class ReaderAudioPlayer: NSObject, AVSpeechSynthesizerDelegate {
   private func updateNowPlaying() {
     guard !items.isEmpty else { return }
     var info: [String: Any] = [MPMediaItemPropertyTitle: title.isEmpty ? "Lectura en voz alta" : title]
-    if lastPage > 0 { info[MPMediaItemPropertyArtist] = "Página \(lastPage)" }
+    if lastPage > 0 {
+      info[MPMediaItemPropertyArtist] = pageMode == "bible"
+        ? (lastPage % 1000 > 0 ? "Capítulo \(lastPage / 1000) · versículo \(lastPage % 1000)" : "Capítulo \(lastPage / 1000)")
+        : "Página \(lastPage)"
+    }
     info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = info
   }

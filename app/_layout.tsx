@@ -1,11 +1,7 @@
+import { EBGaramond_400Regular, EBGaramond_700Bold, useFonts } from '@expo-google-fonts/eb-garamond';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import { NavigationBar } from 'expo-navigation-bar';
-import { StatusBar } from 'expo-status-bar';
-import * as SystemUI from 'expo-system-ui';
-import { useEffect } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AppSettingsProvider } from '@/constants/app-settings';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -27,17 +23,8 @@ export default function RootLayout() {
 
 function RootLayoutContent() {
   const colorScheme = useColorScheme();
-  const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') {
-      return;
-    }
-
-    SystemUI.setBackgroundColorAsync('#2F1E12').catch(() => undefined);
-  }, []);
-
-
+  // Book typeface for the "Libro" reading option; until it loads the reader uses the phone's font.
+  useFonts({ EBGaramond_400Regular, EBGaramond_700Bold });
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -46,27 +33,6 @@ function RootLayoutContent() {
         <Stack.Screen name="chapter-reader" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
-      {Platform.OS === 'android' ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.androidBottomFallback,
-            { height: insets.bottom > 0 ? insets.bottom : 24 },
-          ]}
-        />
-      ) : null}
-      {Platform.OS === 'android' ? <NavigationBar style="dark" hidden={false} /> : null}
-      <StatusBar style="auto" hidden={false} />
     </ThemeProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  androidBottomFallback: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#2F1E12',
-  },
-});

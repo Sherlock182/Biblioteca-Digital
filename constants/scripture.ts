@@ -1,132 +1,5 @@
-// Importar index estático de RV1960
-import { rv1960StaticIndex } from './rv1960-index';
+import { displayBookName } from './reading-history';
 
-// Mapeo robusto de nombres de libros a los nombres esperados por la API RV1960
-const RV1960_API_BOOK_MAP: Record<string, string> = {
-  'Génesis': 'Genesis',
-  'Éxodo': 'Exodo',
-  'Levítico': 'Levitico',
-  'Números': 'Numeros',
-  'Deuteronomio': 'Deuteronomio',
-  'Josué': 'Josue',
-  'Jueces': 'Jueces',
-  'Rut': 'Rut',
-  '1 Samuel': '1Samuel',
-  '2 Samuel': '2Samuel',
-  '1 Reyes': '1Reyes',
-  '2 Reyes': '2Reyes',
-  '1 Crónicas': '1Cronicas',
-  '2 Crónicas': '2Cronicas',
-  'Esdras': 'Esdras',
-  'Nehemías': 'Nehemias',
-  'Ester': 'Ester',
-  'Job': 'Job',
-  'Salmos': 'Salmos',
-  'Proverbios': 'Proverbios',
-  'Eclesiastés': 'Eclesiastes',
-  'Cantares': 'Cantares',
-  'Isaías': 'Isaias',
-  'Jeremías': 'Jeremias',
-  'Lamentaciones': 'Lamentaciones',
-  'Ezequiel': 'Ezequiel',
-  'Daniel': 'Daniel',
-  'Oseas': 'Oseas',
-  'Joel': 'Joel',
-  'Amós': 'Amos',
-  'Abdías': 'Abdias',
-  'Jonás': 'Jonas',
-  'Miqueas': 'Miqueas',
-  'Nahúm': 'Nahum',
-  'Habacuc': 'Habacuc',
-  'Sofonías': 'Sofonias',
-  'Hageo': 'Hageo',
-  'Zacarías': 'Zacarias',
-  'Malaquías': 'Malaquias',
-  'Mateo': 'Mateo',
-  'Marcos': 'Marcos',
-  'Lucas': 'Lucas',
-  'Juan': 'Juan',
-  'Hechos': 'Hechos',
-  'Romanos': 'Romanos',
-  '1 Corintios': '1Corintios',
-  '2 Corintios': '2Corintios',
-  'Gálatas': 'Galatas',
-  'Efesios': 'Efesios',
-  'Filipenses': 'Filipenses',
-  'Colosenses': 'Colosenses',
-  '1 Tesalonicenses': '1Tesalonicenses',
-  '2 Tesalonicenses': '2Tesalonicenses',
-  '1 Timoteo': '1Timoteo',
-  '2 Timoteo': '2Timoteo',
-  'Tito': 'Tito',
-  'Filemón': 'Filemon',
-  'Hebreos': 'Hebreos',
-  'Santiago': 'Santiago',
-  '1 Pedro': '1Pedro',
-  '2 Pedro': '2Pedro',
-  '1 Juan': '1Juan',
-  '2 Juan': '2Juan',
-  '3 Juan': '3Juan',
-  'Judas': 'Judas',
-  'Apocalipsis': 'Apocalipsis',
-};
-// Normaliza un nombre de libro para buscarlo en el mapeo o para la API
-function normalizeBookName(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFD').replace(/\p{Diacritic}/gu, '') // quita tildes
-    .replace(/[^a-z0-9]/gi, '') // quita espacios y signos
-    .replace(/^i+/, match => match.replace(/i/g, '1')) // i Juan -> 1 Juan
-    .replace(/^ii+/, match => match.replace(/i/g, '2')) // ii Samuel -> 2 Samuel
-    .replace(/^iii+/, match => match.replace(/i/g, '3')) // iii Juan -> 3 Juan
-    ;
-}
-
-// Busca el nombre correcto para la API usando normalización flexible
-function getApiBookName(book: string): string {
-  // 1. Intentar mapeo directo
-  if (RV1960_API_BOOK_MAP[book]) return RV1960_API_BOOK_MAP[book];
-  // 2. Buscar por normalización
-  const norm = normalizeBookName(book);
-  for (const [k, v] of Object.entries(RV1960_API_BOOK_MAP)) {
-    if (normalizeBookName(k) === norm) return v;
-  }
-  // 3. Si no, devolver el nombre original sin tildes ni espacios
-  return book.replace(/\p{Diacritic}/gu, '').replace(/ /g, '');
-}
-
-// Obtiene el texto de un capítulo de la RV1960 desde la API pública
-export async function fetchRv1960ChapterFromApi(book: string, chapter: number): Promise<ChapterContent> {
-  try {
-    const apiBook = getApiBookName(book);
-    const url = `https://alejandroch1202-biblia-api.hf.space/api/rvr1960/${apiBook}/${chapter}`;
-    // Log para depuración
-    if (typeof console !== 'undefined') {
-      console.log('[RV1960] Solicitando:', { originalBook: book, apiBook, chapter, url });
-    }
-    const response = await fetch(url);
-    if (!response.ok) {
-      if (typeof console !== 'undefined') {
-        console.log('[RV1960] Respuesta no OK:', response.status, response.statusText);
-      }
-      return { source: 'api', verses: [], note: 'No se pudo obtener el capítulo desde la API.' };
-    }
-    const data = await response.json();
-    if (typeof console !== 'undefined') {
-      console.log('[RV1960] Respuesta de la API:', data);
-    }
-    // La API devuelve un array de versículos: { book, chapter, verse, text }
-    const verses = Array.isArray(data)
-      ? data.map((v: any) => ({ number: v.verse, text: v.text }))
-      : [];
-    return { source: 'api', verses };
-  } catch (e) {
-    if (typeof console !== 'undefined') {
-      console.log('[RV1960] Error al consultar la API:', e);
-    }
-    return { source: 'api', verses: [], note: 'Error al consultar la API.' };
-  }
-}
 export type SacredBook = {
   id: string;
   title: string;
@@ -306,6 +179,12 @@ export const CATHOLIC_BOOK_LIST: CollectionBookListItem[] = [
   { type: 'subsection', label: 'Profecía' },
   { type: 'book', label: 'Apocalipsis', book: 'Apocalipsis' },
 ];
+
+/** One testament of the Catholic list, keeping its groups (Pentateuco, Libros históricos…); the testament toggle replaces its header. */
+export function getCatholicBookList(testament: TestamentType): CollectionBookListItem[] {
+  const start = CATHOLIC_BOOK_LIST.findIndex(item => item.type === 'section' && item.label === 'Nuevo Testamento');
+  return testament === 'nuevo' ? CATHOLIC_BOOK_LIST.slice(start + 1) : CATHOLIC_BOOK_LIST.slice(1, start);
+}
 
 const CATHOLIC_BOOKS = CATHOLIC_BOOK_LIST
   .filter((item): item is { type: 'book'; label: string; book: string } => item.type === 'book')
@@ -540,7 +419,7 @@ export const SACRED_BOOKS: SacredBook[] = [
     id: 'rv1960',
     title: 'Biblia Reina Valera 1960',
     shortName: 'RV 1960',
-    subtitle: 'Version clasica en espanol',
+    subtitle: 'Versión clásica en español',
     icon: '✝',
     colors: { cover: '#143D59', spine: '#0A2233', text: '#E7F5FF' },
     books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
@@ -615,7 +494,7 @@ export function getChapterContent(collectionId: string, book: string, chapter: n
     source: 'missing',
     verses: [],
     note:
-      'La pantalla ya esta preparada, pero este capitulo todavia no tiene un texto cargado. Para mostrarlo tal como una biblia fisica, necesitas importar una fuente publica o con licencia de la traduccion elegida.',
+      'La pantalla ya está preparada, pero este capítulo todavía no tiene un texto cargado. Para mostrarlo tal como una Biblia física, necesitas importar una fuente pública o con licencia de la traducción elegida.',
   };
 }
 
@@ -625,13 +504,27 @@ export function getChapterContent(collectionId: string, book: string, chapter: n
 // null marks a verse the translation omits (e.g. Acts 8:37 in the Platense).
 type LocalBible = Record<string, (string | null)[][]>;
 
-// Nueva Biblia Viva © 2008 Biblica, Inc. (Biblica® Open, CC BY-SA 4.0), from ebible.org.
-const NBV_DATA = require('../assets/data/biblia-nbv.json') as LocalBible;
-// Biblia Platense (Mons. Juan Straubinger, La Plata 1948), Catholic, public domain; from CrossWire.
-// Vulgate versification: Esther 16 and Daniel 14 chapters, Psalms numbered as in the Vulgate.
-const CATHOLIC_DATA = require('../assets/data/biblia-catolica-platense.json') as LocalBible;
+// Each Bible is loaded into memory the first time it is read, not when the app starts.
+const LOCAL_BIBLE_FILES: Record<string, () => LocalBible> = {
+  // Nueva Biblia Viva © 2008 Biblica, Inc. (Biblica® Open, CC BY-SA 4.0), from ebible.org.
+  nbv: () => require('../assets/data/biblia-nbv.json'),
+  // Biblia Platense (Mons. Juan Straubinger, La Plata 1948), Catholic, public domain; from CrossWire.
+  // Vulgate versification: Esther 16 and Daniel 14 chapters, Psalms numbered as in the Vulgate.
+  catolica: () => require('../assets/data/biblia-catolica-platense.json'),
+};
+const loadedBibles: Record<string, LocalBible> = {};
+function getLocalBible(collectionId: string): LocalBible | undefined {
+  const load = LOCAL_BIBLE_FILES[collectionId];
+  return load ? (loadedBibles[collectionId] ??= load()) : undefined;
+}
 
-const LOCAL_BIBLES: Record<string, LocalBible> = { nbv: NBV_DATA, catolica: CATHOLIC_DATA };
+let rv1960Index: Record<string, string[][]> | null = null;
+/** The RV1960 books (66 modules), loaded on first use. */
+function getRv1960Index() {
+  // A require() here (not an import) is what defers loading the 66 books until they are read.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return (rv1960Index ??= require('./rv1960-index').rv1960StaticIndex as Record<string, string[][]>);
+}
 
 /** Source line shown at the end of each chapter. */
 export const COLLECTION_CREDITS: Record<string, string> = {
@@ -642,12 +535,12 @@ export const COLLECTION_CREDITS: Record<string, string> = {
 /** Chapter count of a book in a given Bible (Catholic Daniel has 14, for example). */
 export function getCollectionChapterCount(collectionId: string | null | undefined, book?: string | null) {
   if (!book) return 0;
-  const local = collectionId ? LOCAL_BIBLES[collectionId]?.[book] : undefined;
+  const local = collectionId ? getLocalBible(collectionId)?.[book] : undefined;
   return local ? local.length : getChapterCount(book);
 }
 
 function getLocalBibleChapter(collectionId: string, book: string, chapter: number): ChapterContent {
-  const chapterData = LOCAL_BIBLES[collectionId]?.[book]?.[chapter - 1];
+  const chapterData = getLocalBible(collectionId)?.[book]?.[chapter - 1];
   if (!chapterData || chapterData.length === 0) {
     return { source: 'missing', verses: [], note: `El capítulo ${chapter} de ${book} no está disponible.` };
   }
@@ -659,7 +552,7 @@ function getLocalBibleChapter(collectionId: string, book: string, chapter: numbe
     const previous = verses[verses.length - 1];
     if (previous) previous.label = previous.number + '-' + (i + 1);
   });
-  return { source: 'local', verses, heading: `${book} ${chapter}` };
+  return { source: 'local', verses, heading: `${displayBookName(book)} ${chapter}` };
 }
 
 // ── RV1960 local (empaquetada en la app, sin internet) ─────────────────────
@@ -734,7 +627,7 @@ function getRv1960ChapterLocal(book: string, chapter: number): ChapterContent {
     'Apocalipsis': 'apocalipsis',
   };
   const fileKey = fileMap[book] || book.toLowerCase().replace(/ /g, '_').replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i').replace(/ó/g, 'o').replace(/ú/g, 'u').replace(/ñ/g, 'n');
-  const chapters = rv1960StaticIndex[fileKey];
+  const chapters = getRv1960Index()[fileKey];
   if (!chapters) {
     return { source: 'missing', verses: [], note: `No se encontró el libro local de RV1960 para ${book}.` };
   }
@@ -747,7 +640,13 @@ function getRv1960ChapterLocal(book: string, chapter: number): ChapterContent {
     };
   }
   const verses: VerseLine[] = chapterArr.map((text: string, i: number) => ({ number: i + 1, text: String(text ?? '').trim() }));
-  return { source: 'local', verses, heading: `${book} ${chapter}` };
+  return { source: 'local', verses, heading: `${displayBookName(book)} ${chapter}` };
+}
+
+/** Verses of a chapter from the text bundled in the app (no network), as the reader shows them. */
+export function getLocalChapterVerses(collectionId: string, book: string, chapter: number): VerseLine[] {
+  if (collectionId === 'rv1960') return getRv1960ChapterLocal(book, chapter).verses;
+  return LOCAL_BIBLE_FILES[collectionId] ? getLocalBibleChapter(collectionId, book, chapter).verses : [];
 }
 
 export async function fetchChapterContent(
@@ -757,13 +656,10 @@ export async function fetchChapterContent(
   options?: { tanakhLanguage?: TanakhLanguage },
 ): Promise<ChapterContent> {
   if (collectionId === 'rv1960') {
-    // Intentar primero local, si falla, intentar API
-    const local = getRv1960ChapterLocal(book, chapter);
-    if (local.verses.length > 0) return local;
-    // Si no hay datos locales, intentar API
-    return fetchRv1960ChapterFromApi(book, chapter);
+    // The whole RV1960 is bundled in the app: no network.
+    return getRv1960ChapterLocal(book, chapter);
   }
-  if (LOCAL_BIBLES[collectionId]) {
+  if (LOCAL_BIBLE_FILES[collectionId]) {
     return getLocalBibleChapter(collectionId, book, chapter);
   }
   return { source: 'missing', verses: [], note: 'Esta Biblia no está disponible.' };

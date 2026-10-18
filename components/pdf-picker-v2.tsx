@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { seedDefaultPDFs } from '@/constants/default-pdfs';
 import { createPDFBookmark, PDFBookmark } from '@/constants/pdf-books';
 import { PDFLibraryService } from '@/constants/pdf-library-service';
 import { MAX_PDF_BYTES, PDFStorageService } from '@/constants/pdf-storage-service';
@@ -6,6 +7,7 @@ import { readFileAsBase64Safe } from '@/constants/safe-file-reader';
 import { AppTheme, mergeStyles, useAppSettings } from '@/constants/app-settings';
 import { usePDFAnalyzer } from './pdf-analyzer';
 import * as DocumentPicker from 'expo-document-picker';
+import { StatusBar } from 'expo-status-bar';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, DimensionValue, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -49,14 +51,19 @@ export default function PDFLibrary() {
   const [stage, setStage] = useState('');
   const [books, setBooks] = useState<PDFBookmark[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
+  // Only the first load shows the spinner; coming back from the reader refreshes the list in place.
   const load = useCallback(async () => {
-    setLoading(true); setError('');
-    try { setBooks((await PDFLibraryService.loadLibrary()).books); }
+    setError('');
+    try {
+      await seedDefaultPDFs();
+      setBooks((await PDFLibraryService.loadLibrary()).books);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cargar la biblioteca.'); }
     finally { setLoading(false); }
   }, []);
@@ -123,12 +130,13 @@ export default function PDFLibrary() {
   };
   return <>
     <Stack.Screen options={{ headerShown: false }} />
+    <StatusBar style={theme.ui.statusBar} />
     <SafeAreaView style={styles.screen}>
       <View style={styles.top}>
         <Pressable accessibilityRole="button" accessibilityLabel="Volver al inicio" onPress={() => router.back()} style={styles.iconButton}>
           <MaterialIcons name="arrow-back" size={24} color={icons.nav} />
         </Pressable>
-        <Text style={styles.brand}>PROYECTO MR / BIBLIOTECA</Text>
+        <Text style={styles.brand}>BIBLIOTECA DIGITAL</Text>
         <View style={styles.badge}><Text style={styles.badgeText}>PDF</Text></View>
       </View>
       <View style={styles.intro}>
@@ -154,10 +162,10 @@ export default function PDFLibrary() {
           <MaterialIcons name="sort" size={18} color={icons.accent} /><Text style={styles.sortText}>{sort === 'recent' ? 'Recientes' : 'Nombre A–Z'}</Text>
         </Pressable>
       </View>
-      {error ? <View style={styles.empty}><Text style={styles.emptyTitle}>No se pudo cargar la biblioteca</Text><Text style={styles.subtitle}>{error}</Text><Pressable accessibilityRole="button" onPress={() => void load()} style={styles.addButton}><Text style={styles.addText}>Reintentar</Text></Pressable></View>
+      {error ? <View style={styles.empty}><Text style={styles.emptyTitle}>No se pudo cargar la biblioteca</Text><Text style={styles.subtitle}>{error}</Text><Pressable accessibilityRole="button" onPress={() => { setLoading(true); void load(); }} style={styles.addButton}><Text style={styles.addText}>Reintentar</Text></Pressable></View>
         : loading ? <View style={styles.empty}><ActivityIndicator size="large" color={icons.spinner} /></View>
         : <FlatList data={filtered} keyExtractor={item => item.id} contentContainerStyle={styles.list}
-          refreshing={loading} onRefresh={() => void load()}
+          refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load().finally(() => setRefreshing(false)); }}
           ListEmptyComponent={<View style={styles.empty}>
             <View style={styles.emptyIcon}><MaterialIcons name="auto-stories" size={42} color={icons.empty} /></View>
             <Text style={styles.emptyTitle}>{query ? 'Sin coincidencias' : 'Tu próxima lectura empieza aquí'}</Text>

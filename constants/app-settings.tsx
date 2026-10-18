@@ -103,8 +103,23 @@ export const TEXT_SIZES = [
   { id: 'xxl', label: 'Enorme', scale: 1.5 },
 ] as const;
 
-export type AppSettings = { themeId: ThemeId; textScale: number };
-const DEFAULT_SETTINGS: AppSettings = { themeId: 'clasico', textScale: 1 };
+/** Typeface of the Bible text: the phone's serif, or EB Garamond (a book face, loaded in the root layout). */
+export const READER_FONTS = [
+  { id: 'clasica', label: 'Clásica', description: 'La letra del teléfono' },
+  { id: 'libro', label: 'Libro', description: 'Garamond, como una Biblia impresa' },
+] as const;
+export type ReaderFontId = (typeof READER_FONTS)[number]['id'];
+export const GARAMOND = { regular: 'EBGaramond_400Regular', bold: 'EBGaramond_700Bold' };
+
+/** One verse per line, or running text with small verse numbers (as in a printed Bible). */
+export const VERSE_LAYOUTS = [
+  { id: 'versiculos', label: 'Versículos', description: 'Uno por renglón' },
+  { id: 'parrafo', label: 'Párrafo', description: 'Texto corrido' },
+] as const;
+export type VerseLayoutId = (typeof VERSE_LAYOUTS)[number]['id'];
+
+export type AppSettings = { themeId: ThemeId; textScale: number; readerFont: ReaderFontId; verseLayout: VerseLayoutId };
+const DEFAULT_SETTINGS: AppSettings = { themeId: 'clasico', textScale: 1, readerFont: 'clasica', verseLayout: 'versiculos' };
 const STORAGE_KEY = '@app_settings_v1';
 
 export function sanitizeAppSettings(value: unknown): AppSettings {
@@ -112,6 +127,8 @@ export function sanitizeAppSettings(value: unknown): AppSettings {
   return {
     themeId: THEMES.some(theme => theme.id === raw.themeId) ? raw.themeId as ThemeId : DEFAULT_SETTINGS.themeId,
     textScale: TEXT_SIZES.some(size => size.scale === raw.textScale) ? raw.textScale as number : DEFAULT_SETTINGS.textScale,
+    readerFont: READER_FONTS.some(font => font.id === raw.readerFont) ? raw.readerFont as ReaderFontId : DEFAULT_SETTINGS.readerFont,
+    verseLayout: VERSE_LAYOUTS.some(layout => layout.id === raw.verseLayout) ? raw.verseLayout as VerseLayoutId : DEFAULT_SETTINGS.verseLayout,
   };
 }
 
@@ -127,10 +144,13 @@ type AppSettingsContext = {
   theme: AppTheme;
   setTheme: (id: ThemeId) => void;
   setTextScale: (scale: number) => void;
+  setReaderFont: (font: ReaderFontId) => void;
+  setVerseLayout: (layout: VerseLayoutId) => void;
 };
 
 const Context = createContext<AppSettingsContext>({
   settings: DEFAULT_SETTINGS, theme: THEMES[0], setTheme: () => undefined, setTextScale: () => undefined,
+  setReaderFont: () => undefined, setVerseLayout: () => undefined,
 });
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
@@ -154,6 +174,8 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     theme: THEMES.find(theme => theme.id === settings.themeId) ?? THEMES[0],
     setTheme: themeId => update({ themeId }),
     setTextScale: textScale => update({ textScale }),
+    setReaderFont: readerFont => update({ readerFont }),
+    setVerseLayout: verseLayout => update({ verseLayout }),
   }), [settings, update]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -1,20 +1,24 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { Sheet } from '@/components/ui/sheet';
 import { AppSettingsSheet } from '@/components/home/app-settings-sheet';
+import { BibleSearch } from '@/components/home/bible-search';
+import { BookmarksSheet } from '@/components/home/bookmarks-sheet';
 import { ContinueReadingCard } from '@/components/home/continue-reading-card';
 import { OpenBookIcon } from '@/components/home/open-book-icon';
 import { VerseOfDayCard } from '@/components/home/verse-of-day-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { AppTheme, useAppSettings } from '@/constants/app-settings';
+import type { Bookmark } from '@/constants/bookmarks';
 import { displayBookName, LastReading, loadLastReadings } from '@/constants/reading-history';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { Animated, Easing, Modal, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle, useWindowDimensions } from 'react-native';
+import { Animated, BackHandler, Easing, Image, ImageBackground, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
     getCollectionChapterCount,
-    CATHOLIC_BOOK_LIST,
+    getCatholicBookList,
     SACRED_BOOKS,
     TANAKH_BOOK_LIST,
     getBooksForCollection,
@@ -80,9 +84,37 @@ const COLLECTION_META: Record<string, string> = {
 };
 const collectionMeta = (id: string) => COLLECTION_META[id] ?? '';
 
+// Wood textures generated for the home screen (hewn beam, walnut bookcase).
+const WOOD_BEAM = require('@/assets/images/wood-beam.png');
+const SHELF_FRAME = require('@/assets/images/shelf-frame.png');
+const SHELF_BACK = require('@/assets/images/shelf-back.png');
+const SHELF_PLANK = require('@/assets/images/shelf-plank.png');
+
+/** Splits shelf items into rows of two, one wooden shelf per row. */
+function pairs<T>(items: T[]) {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += 2) rows.push(items.slice(i, i + 2));
+  return rows;
+}
+
+/**
+ * Title size and padding for the wooden sign, from its width. wood-beam.png is 1600×440: the wood spans
+ * 6%–86% of the height and the nails sit in the outer 10% on each side. At 0.084 × width the two lines
+ * ("BIBLIOTECA" is the widest) fill about 70% of the width and 85% of the wood's height. The size is a
+ * pure ratio of the width (no min/max), so the sign looks the same on every phone and tablet.
+ */
+function boardMetrics(width: number) {
+  const height = width * 440 / 1600;
+  const fontSize = width * 0.084;
+  return {
+    box: { paddingHorizontal: width * 0.1, paddingTop: height * 0.06, paddingBottom: height * 0.14 },
+    text: { fontSize, lineHeight: fontSize * 1.1, letterSpacing: fontSize * 0.06 },
+  };
+}
+
 function greeting(date = new Date()) {
   const hour = date.getHours();
-  return hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  return hour < 12 ? 'Buenos Días Amado Hermano' : hour < 19 ? 'Buenas Tardes Amado Hermano' : 'Buenas Noches Amado Hermano';
 }
 
 /** A shelf slot that slides in after the previous one and sinks slightly when pressed. */
@@ -121,6 +153,14 @@ export default function HomeScreen() {
   const router = useRouter();
   const { theme } = useAppSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bookmarksOpen, setBookmarksOpen] = useState(false);
+  const openBookmark = (bookmark: Bookmark) => {
+    setBookmarksOpen(false);
+    router.push({
+      pathname: '/chapter-reader',
+      params: { collectionId: bookmark.collectionId, book: bookmark.book, chapter: String(bookmark.chapter), verse: String(bookmark.verse) },
+    });
+  };
   const [readings, setReadings] = useState<Awaited<ReturnType<typeof loadLastReadings>>>({ bible: null, latest: null, pdfCount: 0 });
   // Refresh "continue reading" every time the user comes back to this screen.
   useFocusEffect(useCallback(() => {
@@ -168,22 +208,28 @@ export default function HomeScreen() {
       params: { collectionId: reading.collectionId, book: reading.book, chapter: String(reading.chapter), tanakhLanguage: reading.tanakhLanguage },
     });
   };
-  const { height } = useWindowDimensions();
+  const { height, width: screenWidth } = useWindowDimensions();
+  // Real width of the wooden sign; the title is sized from it so it reads the same on every phone.
+  const [boardWidth, setBoardWidth] = useState(0);
+  const board = boardMetrics(boardWidth || screenWidth - 52);
   const [openedCollection, setOpenedCollection] = useState<SacredBook | null>(null);
   const [selectedBook, setSelectedBook] = useState<string | null>(null);
   const [selectedTestament, setSelectedTestament] = useState<TestamentType>('antiguo');
   const [tanakhLanguage, setTanakhLanguage] = useState<TanakhLanguage>('es');
   const [chapterPanelBook, setChapterPanelBook] = useState<string | null>(null);
+  // The search bar has text: its results take the place of the list of books.
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchKey, setSearchKey] = useState(0);
   const [boardEntrance] = useState(() => new Animated.Value(0));
 
   // Bibles organized in Old / New Testament.
-  const isRv1960 = openedCollection?.id === 'rv1960' || openedCollection?.id === 'nbv';
+  const isRv1960 = openedCollection?.id === 'rv1960' || openedCollection?.id === 'nbv' || openedCollection?.id === 'catolica';
   const isJewishCollection = openedCollection?.id === 'jewish';
   const isHebrewTanakh = isJewishCollection && tanakhLanguage === 'he';
 
   const getDisplayBookName = (bookName: string) => {
     if (!isHebrewTanakh) {
-      return bookName;
+      return displayBookName(bookName);
     }
 
     return TANAKH_HEBREW_BOOK_LABELS[bookName] ?? bookName;
@@ -215,7 +261,7 @@ export default function HomeScreen() {
     }
 
     if (openedCollection.id === 'catolica') {
-      return CATHOLIC_BOOK_LIST;
+      return getCatholicBookList(selectedTestament);
     }
 
     return getBooksForCollection(openedCollection.id, isRv1960 ? selectedTestament : 'antiguo').map((book) => ({
@@ -261,10 +307,11 @@ export default function HomeScreen() {
 
   const onSelectCollection = (item: SacredBook) => {
     setOpenedCollection(item);
+    setSearchActive(false);
     setSelectedBook(null);
     setChapterPanelBook(null);
     setTanakhLanguage('es');
-    if (item.id === 'rv1960' || item.id === 'nbv') {
+    if (item.id === 'rv1960' || item.id === 'nbv' || item.id === 'catolica') {
       setSelectedTestament('antiguo');
     }
   };
@@ -274,6 +321,24 @@ export default function HomeScreen() {
     setSelectedBook(null);
     setChapterPanelBook(null);
   };
+
+  // Android back button with a Bible open: go back to the shelf instead of leaving the app.
+  // With text in the search bar, the first press clears the search (a new key remounts the bar empty).
+  useFocusEffect(useCallback(() => {
+    if (!openedCollection) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (searchActive) {
+        setSearchKey(key => key + 1);
+        setSearchActive(false);
+        return true;
+      }
+      setOpenedCollection(null);
+      setSelectedBook(null);
+      setChapterPanelBook(null);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [openedCollection, searchActive]));
 
   const onSelectChapter = (chapter: number) => {
     if (!chapterPanelBook || !openedCollection) {
@@ -296,6 +361,7 @@ export default function HomeScreen() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.home.page }]} edges={['top']}>
       <StatusBar style={theme.home.statusBar} />
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           openedCollection ? styles.containerOpened : styles.container,
           { paddingBottom: Math.max(14, insets.bottom + 10) },
@@ -304,7 +370,7 @@ export default function HomeScreen() {
           <View style={[styles.headerCard, { backgroundColor: theme.home.card }]}>
             <View style={styles.topBar}>
               <View style={styles.greetingWrap}>
-                <Text style={[styles.greeting, { color: theme.home.accent }]}>{greeting()}</Text>
+                <Text style={[styles.greeting, { color: theme.home.accent }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{greeting()}</Text>
                 <Text style={[styles.greetingSub, { color: theme.home.muted }]}>¿Qué deseas leer hoy?</Text>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Ajustes" onPress={() => setSettingsOpen(true)}
@@ -314,21 +380,14 @@ export default function HomeScreen() {
             </View>
 
             <Animated.View style={[styles.titleBoardWrap, boardAnimatedStyle]}>
-              <View style={styles.titleBoard}>
-                <View style={styles.boardWearTop} />
-                <View style={styles.boardWearBottom} />
-                <View style={styles.boardGrainOne} />
-                <View style={styles.boardGrainTwo} />
-                <View style={styles.boardScratchLong} />
-                <View style={styles.boardKnotLeft} />
-                <View style={styles.boardKnotRight} />
-                <View style={styles.titleBoardEdge} />
-                <View style={styles.boardNailLeft} />
-                <View style={styles.boardNailRight} />
-                <View style={styles.boardNailLeftCenter} />
-                <View style={styles.boardNailRightCenter} />
-                <Text style={[styles.title, { color: theme.home.title }]} numberOfLines={1} adjustsFontSizeToFit>BIBLIOTECA DIGITAL</Text>
-              </View>
+              {/* Hand-hewn beam with forged nails (texture generated for this app, shadow baked in). */}
+              <ImageBackground source={WOOD_BEAM} resizeMode="stretch" onLayout={event => setBoardWidth(event.nativeEvent.layout.width)}
+                style={[styles.titleBoard, board.box]}>
+                {/* Fixed size (ignores the phone's font-size setting): Android's auto-shrink made it tiny on some phones. */}
+                <Text allowFontScaling={false} numberOfLines={2} style={[styles.title, board.text, { color: theme.home.title }]}>
+                  {'BIBLIOTECA\nDIGITAL'}
+                </Text>
+              </ImageBackground>
             </Animated.View>
             <Text style={[styles.subtitle, { color: theme.home.text }]}>
               Abre tu estante y elige la versión offline en español que deseas leer.
@@ -342,15 +401,10 @@ export default function HomeScreen() {
               <ContinueReadingCard reading={readings.latest} theme={theme} onPress={() => openReading(readings.latest!)} />
             )}
 
-            <View style={styles.shelf}>
-              <View style={styles.shelfBackShade} />
-              <View style={styles.shelfTopPlank} />
-              <View style={styles.shelfMiddlePlank} />
-              <View style={styles.shelfBottomPlank} />
-              <View style={styles.shelfPostLeft} />
-              <View style={styles.shelfPostRight} />
-              <View style={styles.shelfBooksGrid}>
-                {SACRED_BOOKS.map((item, index) => (
+            <ImageBackground source={SHELF_FRAME} resizeMode="cover" style={styles.shelf} imageStyle={styles.shelfImage}>
+              <ImageBackground source={SHELF_BACK} resizeMode="cover" style={styles.shelfBack} imageStyle={styles.shelfBackImage}>
+                {pairs([
+                ...SACRED_BOOKS.map((item, index) => (
                   <ShelfTile key={item.id} index={index} label={item.title} onPress={() => onSelectCollection(item)}
                     style={[styles.shelfBook, { backgroundColor: theme.home.tile, borderColor: theme.home.tileBorder }]}>
                     <View style={styles.bookShape}>
@@ -378,9 +432,8 @@ export default function HomeScreen() {
                     </View>
                     <ShelfMeta title={item.title} text={collectionMeta(item.id)} resume={resumeLabel(item.id)} theme={theme} />
                   </ShelfTile>
-                ))}
-
-                <ShelfTile index={SACRED_BOOKS.length} label="Leer PDF" onPress={() => router.push('/pdf-library')}
+                )),
+                <ShelfTile key="pdf" index={SACRED_BOOKS.length} label="Leer PDF" onPress={() => router.push('/pdf-library')}
                   style={[styles.shelfBook, { backgroundColor: theme.home.tile, borderColor: theme.home.tileBorder }]}>
                   <View style={styles.pdfDocumentStack}>
                     <View style={[styles.pdfSheet, { transform: [{ translateY: 8 }, { translateX: 8 }] }]} />
@@ -399,9 +452,24 @@ export default function HomeScreen() {
                   </View>
                   <ShelfMeta text={readings.pdfCount > 0 ? readings.pdfCount + (readings.pdfCount === 1 ? ' documento' : ' documentos') : 'Importa tus PDF'}
                     title="Leer PDF" theme={theme} />
-                </ShelfTile>
-              </View>
-            </View>
+                </ShelfTile>,
+                ]).map((row, r) => (
+                  <View key={r}>
+                    <View style={styles.shelfRow}>{row}</View>
+                    <Image source={SHELF_PLANK} resizeMode="stretch" style={styles.shelfPlank} />
+                  </View>
+                ))}
+              </ImageBackground>
+            </ImageBackground>
+
+            {/* Thin board under the bookcase: quick access to the marked verses of the three Bibles. */}
+            <Pressable accessibilityRole="button" accessibilityLabel="Marcadores" onPress={() => setBookmarksOpen(true)}
+              style={({ pressed }) => [styles.bookmarksBoardWrap, pressed && styles.bookmarksBoardPressed]}>
+              <ImageBackground source={WOOD_BEAM} resizeMode="cover" style={styles.bookmarksBoard} imageStyle={styles.bookmarksBoardImage}>
+                <MaterialIcons name="bookmarks" size={20} color={theme.home.title} style={styles.bookmarksBoardIcon} />
+                <Text allowFontScaling={false} style={[styles.bookmarksBoardText, { color: theme.home.title }]}>MARCADORES</Text>
+              </ImageBackground>
+            </Pressable>
 
             <VerseOfDayCard theme={theme} />
           </View>
@@ -423,6 +491,14 @@ export default function HomeScreen() {
                   </Pressable>
               </View>
 
+              <BibleSearch key={openedCollection.id + searchKey}collectionId={openedCollection.id} theme={theme}
+                onActiveChange={setSearchActive} onPickBook={(book) => setChapterPanelBook(book)}
+                onOpenVerse={(book, chapter, verse) => router.push({
+                  pathname: '/chapter-reader',
+                  params: { collectionId: openedCollection.id, book, chapter: String(chapter), ...(verse ? { verse: String(verse) } : {}) },
+                })} />
+
+              {!searchActive && <>
               <Text style={[styles.selectorLabel, lib?.selectorLabel]}>Libro</Text>
               {isJewishCollection && (
                 <View style={styles.languageToggleWrap}>
@@ -493,7 +569,7 @@ export default function HomeScreen() {
                   }
 
                   const isActive = selectedBook === item.book;
-                  const itemLabel = isHebrewTanakh ? getDisplayBookName(item.book) : item.label;
+                  const itemLabel = isHebrewTanakh ? getDisplayBookName(item.book) : displayBookName(item.label);
 
                   return (
                     <Pressable
@@ -509,17 +585,20 @@ export default function HomeScreen() {
                   );
                 })}
               </View>
+              </>}
             </View>
           </View>
         )}
       </ScrollView>
 
       <AppSettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <BookmarksSheet visible={bookmarksOpen} onClose={() => setBookmarksOpen(false)} onOpen={openBookmark} />
 
-      <Modal visible={chapterPanelBook !== null} transparent animationType="slide" onRequestClose={() => setChapterPanelBook(null)}>
+      <Sheet visible={chapterPanelBook !== null} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setChapterPanelBook(null)}>
         <View style={styles.chapterOverlay}>
           <Pressable style={styles.chapterOverlayBg} onPress={() => setChapterPanelBook(null)} />
-          <View style={[styles.chapterPanel, lib?.chapterPanel]}>
+          {/* The sheet reaches the bottom edge: keep the last row above the phone's navigation buttons. */}
+          <View style={[styles.chapterPanel, lib?.chapterPanel, { paddingBottom: Math.max(20, insets.bottom + 16) }]}>
             <View style={styles.chapterPanelHeader}>
               <View>
                 <Text style={[styles.chapterPanelTitle, lib?.readingTitle, isHebrewTanakh && styles.chapterPanelTitleHebrew]}>{chapterPanelBook ? getDisplayBookName(chapterPanelBook) : ''}</Text>
@@ -538,7 +617,7 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
         </View>
-      </Modal>
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -548,14 +627,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F4EEE1',
   },
+  // On tablets the shelf and the book list keep a phone-like width, centered.
   container: {
     flexGrow: 1,
     padding: 18,
     gap: 16,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
   },
   containerOpened: {
     flexGrow: 1,
     padding: 12,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
   },
   headerCard: {
     borderRadius: 26,
@@ -591,9 +677,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   title: {
-    fontSize: 23,
-    lineHeight: 30,
-    letterSpacing: 1.5,
     fontWeight: '900',
     color: '#D9C19A',
     textAlign: 'center',
@@ -608,252 +691,10 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   titleBoard: {
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 34,
-    backgroundColor: '#3B2517',
-    borderWidth: 4,
-    borderColor: '#160D08',
-    shadowColor: '#000',
-    shadowOpacity: 0.62,
-    shadowOffset: { width: 0, height: 11 },
-    shadowRadius: 16,
-    elevation: 10,
-    position: 'relative',
-    overflow: 'hidden',
-    zIndex: 2,
+    // Matches wood-beam.png (1600×440); padding comes from boardMetrics.
+    aspectRatio: 1600 / 440,
+    justifyContent: 'center',
     transform: [{ rotate: '-0.7deg' }],
-  },
-  boardWearTop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 8,
-    backgroundColor: 'rgba(12,6,4,0.5)',
-  },
-  boardWearBottom: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 10,
-    backgroundColor: 'rgba(8,4,3,0.45)',
-  },
-  boardGrainOne: {
-    position: 'absolute',
-    top: 14,
-    left: -20,
-    right: -20,
-    height: 18,
-    backgroundColor: 'rgba(112,72,41,0.56)',
-    borderRadius: 20,
-  },
-  boardGrainTwo: {
-    position: 'absolute',
-    bottom: 18,
-    left: -12,
-    right: -12,
-    height: 14,
-    backgroundColor: 'rgba(78,50,30,0.62)',
-    borderRadius: 18,
-  },
-  boardGrainThree: {
-    position: 'absolute',
-    top: '52%',
-    left: -18,
-    right: -16,
-    height: 9,
-    backgroundColor: 'rgba(130,83,49,0.38)',
-    borderRadius: 16,
-  },
-  boardScratchLong: {
-    position: 'absolute',
-    top: 30,
-    left: 56,
-    width: 84,
-    height: 2,
-    backgroundColor: 'rgba(17,10,7,0.78)',
-    transform: [{ rotate: '-11deg' }],
-  },
-  boardScratchShort: {
-    position: 'absolute',
-    bottom: 26,
-    right: 52,
-    width: 48,
-    height: 2,
-    backgroundColor: 'rgba(18,10,7,0.76)',
-    transform: [{ rotate: '9deg' }],
-  },
-  boardKnotLeft: {
-    position: 'absolute',
-    left: 34,
-    top: 24,
-    width: 20,
-    height: 20,
-    borderRadius: 99,
-    backgroundColor: 'rgba(35,20,11,0.66)',
-    borderWidth: 1,
-    borderColor: 'rgba(181,132,88,0.28)',
-  },
-  boardKnotRight: {
-    position: 'absolute',
-    right: 36,
-    bottom: 18,
-    width: 16,
-    height: 16,
-    borderRadius: 99,
-    backgroundColor: 'rgba(34,19,11,0.64)',
-    borderWidth: 1,
-    borderColor: 'rgba(181,132,88,0.24)',
-  },
-  boardCrackOne: {
-    position: 'absolute',
-    top: 22,
-    right: 70,
-    width: 52,
-    height: 2,
-    backgroundColor: 'rgba(16,8,5,0.7)',
-    transform: [{ rotate: '-16deg' }],
-  },
-  boardCrackTwo: {
-    position: 'absolute',
-    bottom: 24,
-    left: 82,
-    width: 36,
-    height: 2,
-    backgroundColor: 'rgba(16,8,5,0.68)',
-    transform: [{ rotate: '14deg' }],
-  },
-  boardChipLeft: {
-    position: 'absolute',
-    left: -4,
-    top: 46,
-    width: 10,
-    height: 18,
-    borderTopRightRadius: 6,
-    borderBottomRightRadius: 7,
-    backgroundColor: '#24150D',
-  },
-  boardChipRight: {
-    position: 'absolute',
-    right: -4,
-    bottom: 34,
-    width: 11,
-    height: 16,
-    borderTopLeftRadius: 7,
-    borderBottomLeftRadius: 6,
-    backgroundColor: '#24150D',
-  },
-  titleBoardEdge: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 7,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-  },
-  boardNailLeft: {
-    position: 'absolute',
-    left: 8,
-    top: '50%',
-    marginTop: -7,
-    width: 14,
-    height: 14,
-    borderRadius: 99,
-    backgroundColor: '#3B3A38',
-    borderWidth: 2,
-    borderColor: '#171717',
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  boardNailRight: {
-    position: 'absolute',
-    right: 8,
-    top: '50%',
-    marginTop: -7,
-    width: 14,
-    height: 14,
-    borderRadius: 99,
-    backgroundColor: '#3B3A38',
-    borderWidth: 2,
-    borderColor: '#171717',
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  boardNailLeftRust: {
-    position: 'absolute',
-    left: 7,
-    top: '50%',
-    marginTop: -8,
-    width: 16,
-    height: 16,
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: 'rgba(116,73,38,0.5)',
-    backgroundColor: 'rgba(74,44,22,0.2)',
-  },
-  boardNailRightRust: {
-    position: 'absolute',
-    right: 7,
-    top: '50%',
-    marginTop: -8,
-    width: 16,
-    height: 16,
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: 'rgba(116,73,38,0.5)',
-    backgroundColor: 'rgba(74,44,22,0.2)',
-  },
-  boardNailLeftCenter: {
-    position: 'absolute',
-    left: 12,
-    top: '50%',
-    marginTop: -3,
-    width: 6,
-    height: 6,
-    borderRadius: 99,
-    backgroundColor: '#242424',
-    borderWidth: 1,
-    borderColor: '#111111',
-  },
-  boardNailRightCenter: {
-    position: 'absolute',
-    right: 12,
-    top: '50%',
-    marginTop: -3,
-    width: 6,
-    height: 6,
-    borderRadius: 99,
-    backgroundColor: '#242424',
-    borderWidth: 1,
-    borderColor: '#111111',
-  },
-  boardNailLeftSlot: {
-    position: 'absolute',
-    left: 11,
-    top: '50%',
-    marginTop: -1,
-    width: 8,
-    height: 2,
-    borderRadius: 2,
-    backgroundColor: '#0F0F0F',
-  },
-  boardNailRightSlot: {
-    position: 'absolute',
-    right: 11,
-    top: '50%',
-    marginTop: -1,
-    width: 8,
-    height: 2,
-    borderRadius: 2,
-    backgroundColor: '#0F0F0F',
   },
   subtitle: {
     marginTop: -4,
@@ -863,91 +704,39 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   shelf: {
-    marginTop: 0,
-    borderRadius: 22,
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    backgroundColor: '#2A1C12',
-    borderWidth: 2,
-    borderColor: '#5A3B26',
+    borderRadius: 18,
+    padding: 12,
     overflow: 'hidden',
-    position: 'relative',
+    borderWidth: 1,
+    borderColor: '#1A0F08',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowOffset: { width: 0, height: 10 },
+    shadowRadius: 16,
+    elevation: 8,
   },
-  shelfBooksGrid: {
-    width: '100%',
+  shelfImage: { borderRadius: 18 },
+  shelfBack: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    paddingTop: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.6)',
+  },
+  shelfBackImage: { borderRadius: 8 },
+  shelfRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    rowGap: 22,
-    paddingHorizontal: 6,
-    paddingTop: 8,
+    alignItems: 'flex-end',
+    paddingHorizontal: 10,
     zIndex: 2,
   },
-  shelfBackShade: {
-    position: 'absolute',
-    top: 14,
-    left: 12,
-    right: 12,
-    bottom: 14,
-    borderRadius: 14,
-    backgroundColor: 'rgba(12,8,5,0.36)',
-  },
-  shelfTopPlank: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    right: 8,
-    height: 20,
-    borderRadius: 8,
-    backgroundColor: '#5D3C26',
-    borderWidth: 1,
-    borderColor: '#2E1C11',
-  },
-  shelfMiddlePlank: {
-    position: 'absolute',
-    top: '51%',
-    left: 8,
-    right: 8,
-    marginTop: -9,
-    height: 18,
-    borderRadius: 8,
-    backgroundColor: '#5A3923',
-    borderWidth: 1,
-    borderColor: '#2C1A0F',
-  },
-  shelfBottomPlank: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    height: 20,
-    borderRadius: 8,
-    backgroundColor: '#5D3C26',
-    borderWidth: 1,
-    borderColor: '#2E1C11',
-  },
-  shelfPostLeft: {
-    position: 'absolute',
-    top: 8,
-    bottom: 8,
-    left: 8,
-    width: 16,
-    borderRadius: 6,
-    backgroundColor: '#4A301E',
-    borderWidth: 1,
-    borderColor: '#2B1A10',
-  },
-  shelfPostRight: {
-    position: 'absolute',
-    top: 8,
-    bottom: 8,
-    right: 8,
-    width: 16,
-    borderRadius: 6,
-    backgroundColor: '#4A301E',
-    borderWidth: 1,
-    borderColor: '#2B1A10',
+  shelfPlank: {
+    // shelf-plank.png is 1400×96: top face, rounded front edge, then the shadow it casts.
+    width: '100%',
+    height: 30,
+    marginTop: -3,
+    marginBottom: 6,
   },
   shelfBook: {
     width: '48%',
@@ -967,6 +756,43 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 4,
     zIndex: 3,
+  },
+  bookmarksBoardWrap: {
+    marginTop: -4,
+    marginHorizontal: 6,
+    borderRadius: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: 5 },
+    shadowRadius: 7,
+    elevation: 6,
+  },
+  bookmarksBoardPressed: { transform: [{ scale: 0.97 }], opacity: 0.92 },
+  bookmarksBoard: {
+    // Cropped from the middle of wood-beam.png, so the forged nails stay at both ends.
+    height: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#1A0F08',
+  },
+  bookmarksBoardImage: { borderRadius: 6 },
+  bookmarksBoardIcon: {
+    textShadowColor: 'rgba(20,11,6,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  bookmarksBoardText: {
+    fontSize: 17,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+    textShadowColor: 'rgba(20,11,6,0.8)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 3,
   },
   bookShape: {
     width: 112,
@@ -1092,7 +918,7 @@ const styles = StyleSheet.create({
   },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   greetingWrap: { flex: 1 },
-  greeting: { fontSize: 22, fontWeight: '800', letterSpacing: 0.2 },
+  greeting: { fontSize: 20, fontWeight: '800', letterSpacing: 0.2 },
   greetingSub: { fontSize: 13, marginTop: 2 },
   settingsButton: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   pressedSoft: { opacity: 0.7 },
@@ -1385,7 +1211,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    paddingBottom: 4,
+    paddingBottom: 8,
   },
   chapterChip: {
     width: 52,

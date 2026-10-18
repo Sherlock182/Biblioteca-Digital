@@ -25,6 +25,17 @@ function storageDirectory(): string {
   return root.replace(/\/?$/, '/') + 'pdf_storage/';
 }
 
+/**
+ * Where a saved copy lives today. iOS moves the app's folder when the app is updated, so the full path
+ * stored at import time goes stale; only the file name inside pdf_storage/ stays the same.
+ */
+export function resolveOwnedPDFUri(uri: string): string {
+  const marker = '/pdf_storage/';
+  const index = uri.lastIndexOf(marker);
+  if (Platform.OS === 'web' || index < 0) return uri;
+  try { return storageDirectory() + uri.slice(index + marker.length); } catch { return uri; }
+}
+
 export class PDFStorageService {
   static readPDFAsBase64 = readFileAsBase64Safe;
 
@@ -51,6 +62,7 @@ export class PDFStorageService {
 
   static async deleteOwnedPDF(uri: string): Promise<void> {
     if (Platform.OS === 'web') return;
+    uri = resolveOwnedPDFUri(uri);
     const prefix = storageDirectory();
     // Only delete the app's copy, never the user's source document.
     if (!uri.startsWith(prefix) || !/^pdf_[a-zA-Z0-9_]+\.pdf$/.test(uri.slice(prefix.length))) return;

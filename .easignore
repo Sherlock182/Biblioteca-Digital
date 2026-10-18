@@ -63,3 +63,5 @@ assets/data/catolica-deutero.json
 assets/data/tanakh-hebrew.json
 assets/data/tanakh-hebrew-v2.json
 assets/data/quran-es-asad.json
+# Damaged copy of node_modules left from a reinstall.
+node_modules_dañado/

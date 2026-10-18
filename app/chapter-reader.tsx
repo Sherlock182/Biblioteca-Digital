@@ -1,17 +1,25 @@
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { Sheet } from '@/components/ui/sheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
-import { AppTheme, useAppSettings } from '@/constants/app-settings';
-import { saveBibleReading } from '@/constants/reading-history';
+import { BibleSearch } from '@/components/home/bible-search';
+import { DropCapText, type DropCapSpan } from '@/components/reader/drop-cap-text';
+import { getChapterExtras, hasChapterExtras, noteSegments, type HeadingKind, type VerseExtras } from '@/constants/bible-extras';
+import * as Haptics from 'expo-haptics';
+import { AppTheme, GARAMOND, useAppSettings } from '@/constants/app-settings';
+import { displayBookName, saveBibleReading } from '@/constants/reading-history';
+import { useBibleSpeech } from '@/hooks/use-bible-speech';
 
 import {
-    CATHOLIC_BOOK_LIST,
+    getCatholicBookList,
     COLLECTION_CREDITS,
+    NEW_TESTAMENT_BOOKS,
     TANAKH_BOOK_LIST,
     fetchChapterContent,
     getBooksForCollection,
@@ -21,10 +29,36 @@ import {
     type CollectionBookListItem,
     type TanakhLanguage,
     type TestamentType,
+    type VerseLine,
 } from '@/constants/scripture';
+
+/** Who wrote the notes of each Bible (title and credit of the note sheet). */
+const NOTE_SOURCES: Record<string, { title: string; source: string }> = {
+  catolica: { title: 'NOTA DE MONS. STRAUBINGER', source: 'Biblia Platense (1948) · Dominio público' },
+  nbv: { title: 'NOTA DE LA TRADUCCIÓN', source: 'Nueva Biblia Viva © 2008 Biblica, Inc. · CC BY-SA 4.0' },
+};
 
 function readParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * Paragraph layout: the source texts have no paragraph marks, so verses are grouped into blocks
+ * that end at a sentence end (4 to 9 verses). Each block measures its position, so the reader can
+ * still scroll to a verse (bookmarks, search, reading aloud).
+ */
+function paragraphBlocks(verses: VerseLine[], headingVerses: Set<number>) {
+  const blocks: VerseLine[][] = [];
+  let current: VerseLine[] = [];
+  for (const verse of verses) {
+    // A section heading always starts a new paragraph.
+    if (headingVerses.has(verse.number) && current.length) { blocks.push(current); current = []; }
+    current.push(verse);
+    const sentenceEnd = /[.!?»”"’)]\s*$/.test(verse.text);
+    if ((current.length >= 4 && sentenceEnd) || current.length >= 9) { blocks.push(current); current = []; }
+  }
+  if (current.length) blocks.push(current);
+  return blocks;
 }
 
 const TANAKH_HEBREW_BOOK_LABELS: Record<string, string> = {
@@ -78,7 +112,7 @@ const TANAKH_HEBREW_SUBSECTION_LABELS: Record<string, string> = {
 
 export default function ChapterReaderScreen() {
   const params = useLocalSearchParams();
-  const readingKey = JSON.stringify([params.collectionId, params.book, params.chapter, params.tanakhLanguage]);
+  const readingKey = JSON.stringify([params.collectionId, params.book, params.chapter, params.tanakhLanguage, params.autoplay, params.verse]);
   return <ChapterReaderContent key={readingKey} />;
 }
 
@@ -86,9 +120,8 @@ export default function ChapterReaderScreen() {
 function themeReaderStyles(theme: AppTheme): typeof baseStyles {
   if (theme.id === 'clasico') return baseStyles;
   const ui = theme.ui;
-  const onHeader = { backgroundColor: 'rgba(255,255,255,0.12)', borderColor: 'rgba(255,255,255,0.24)' };
   const overrides: Partial<Record<keyof typeof baseStyles, object>> = {
-    bookSelectorButton: onHeader, chapterBadge: onHeader, backButtonInline: onHeader,
+    listenButtonActive: { backgroundColor: 'rgba(255,255,255,0.32)', borderColor: '#F6EFD2' },
     languageToggleButton: { backgroundColor: 'rgba(0,0,0,0.18)', borderColor: 'rgba(255,255,255,0.22)' },
     languageToggleButtonActive: { backgroundColor: 'rgba(255,255,255,0.22)', borderColor: '#F6EFD2' },
     overlayBg: { backgroundColor: 'rgba(0,0,0,0.5)' },
@@ -135,185 +168,30 @@ function ChapterReaderContent() {
   // Estado para versículos marcados
   const [highlightedVerses, setHighlightedVerses] = useState<{ [key: string]: number[] }>({});
   const [highlightMode, setHighlightMode] = useState(false);
-  const highlightsRef = useRef<{ [key: string]: number[] }>({});
 
   // Validar parámetros - TODOS deben estar presentes y válidos
   const isValidChapter = collectionId && book && typeof chapterValue === 'number' && chapterValue > 0;
   const highlightStorageKey = isValidChapter ? `highlights_${collectionId}_${book}_${chapterValue}` : '';
 
-  // Helper: Cargar datos del storage (AsyncStorage -> localStorage)
-  const loadFromStorage = useCallback(async (key: string): Promise<string | null> => {
-    if (!key) {
-      console.warn('⚠️ Intento de cargar con clave vacía');
-      return null;
-    }
-
-    try {
-      let value: string | null = null;
-
-      if (Platform.OS === 'web') {
-        // WEB: localStorage
-        if (typeof window !== 'undefined' && window.localStorage) {
-          try {
-            value = window.localStorage.getItem(key) || null;
-            if (value) {
-              console.log(`📂 [localStorage/Web] Cargado: ${key}`);
-            }
-          } catch (e) {
-            console.warn(`⚠️ Error en localStorage:`, e);
-          }
-        }
-      } else {
-        // NATIVO: AsyncStorage
-        try {
-          const asyncValue = await AsyncStorage.getItem(key);
-          value = asyncValue || null;
-          if (value) {
-            console.log(`📂 [AsyncStorage/Mobile] Cargado: ${key}`);
-          }
-        } catch (asyncStorageError) {
-          console.warn(`⚠️ Error en AsyncStorage:`, asyncStorageError);
-        }
-      }
-
-      return value;
-    } catch (e) {
-      console.error(`❌ Error fatal en loadFromStorage(${key}):`, e);
-      return null;
-    }
-  }, []);
-
-  // Helper: Guardar datos en storage (AsyncStorage -> localStorage)
-  const saveToStorage = useCallback(async (key: string, value: string): Promise<void> => {
-    if (!key || !value) {
-      console.warn(`⚠️ Intento de guardar con parámetros inválidos: key="${key}", value="${value?.substring(0, 20)}..."`);
-      return;
-    }
-
-    try {
-      let savedSuccessfully = false;
-
-      if (Platform.OS === 'web') {
-        // WEB: localStorage
-        if (typeof window !== 'undefined' && window.localStorage) {
-          try {
-            window.localStorage.setItem(key, value);
-            console.log(`✅ [localStorage/Web] Guardado: ${key} = ${value.substring(0, 50)}...`);
-            savedSuccessfully = true;
-          } catch (e) {
-            console.error(`❌ localStorage.setItem fallo para ${key}:`, e);
-          }
-        }
-      } else {
-        // NATIVO: AsyncStorage
-        try {
-          await AsyncStorage.setItem(key, value);
-          console.log(`✅ [AsyncStorage/Mobile] Guardado: ${key} = ${value.substring(0, 50)}...`);
-          savedSuccessfully = true;
-        } catch (asyncStorageError) {
-          console.error(`❌ AsyncStorage error:`, asyncStorageError);
-        }
-
-        if (!savedSuccessfully) {
-          console.error(`❌ CRÍTICO: No se pudo guardar ${key} en AsyncStorage`);
-        }
-      }
-    } catch (e) {
-      console.error(`❌ Error fatal en saveToStorage(${key}):`, e);
-    }
-  }, []);
-
-  // ============ CARGAR HIGHLIGHTS AL CAMBIAR CAPÍTULO ============
+  // Marked verses of this chapter (AsyncStorage also works on web, through localStorage).
   useEffect(() => {
-    if (!highlightStorageKey) {
-      console.log('🔄 highlightStorageKey vacía, limpiando highlights...');
-      return;
-    }
-
-    const loadHighlightsForChapter = () => {
-      console.log(`🔄 Iniciando carga de highlights para: ${highlightStorageKey}`);
-
-        (async () => {
-          try {
-            const rawData = await loadFromStorage(highlightStorageKey);
-          
-            if (!rawData) {
-              console.log(`ℹ️ No hay datos en storage para ${highlightStorageKey}, inicializando vacío`);
-              setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: [] }));
-              return;
-            }
-
-            // Intentar parsear
-            let parsed: number[];
-            try {
-              parsed = JSON.parse(rawData);
-            } catch (parseErr) {
-              console.error(`❌ Error al parsear JSON para ${highlightStorageKey}:`, parseErr);
-              console.log(`   Valor raw: "${rawData}"`);
-              setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: [] }));
-              return;
-            }
-
-            // Validar que es un array de números
-            if (!Array.isArray(parsed)) {
-              console.warn(`⚠ Datos no son un array para ${highlightStorageKey}, reiniciando`);
-              setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: [] }));
-              return;
-            }
-
-            // Validar que son todos números
-            const validNumbers = parsed.every((n) => typeof n === 'number' && n > 0);
-            if (!validNumbers) {
-              console.warn(`⚠ Array contiene valores no válidos para ${highlightStorageKey}`, parsed);
-              const cleaned = parsed.filter((n) => typeof n === 'number' && n > 0);
-              setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: cleaned }));
-              return;
-            }
-
-            // ✅ Éxito
-            console.log(`✅ Highlights cargados correctamente: ${highlightStorageKey} = [${parsed.join(', ')}]`);
-            setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: parsed }));
-            highlightsRef.current[highlightStorageKey] = parsed;
-          } catch (error) {
-            console.error(`❌ Error inesperado cargando highlights de ${highlightStorageKey}:`, error);
-            setHighlightedVerses((prev) => ({ ...prev, [highlightStorageKey]: [] }));
-          }
-        })();
-    };
-
-    loadHighlightsForChapter();
-  }, [highlightStorageKey, loadFromStorage]);
-
-  // ============ GUARDAR HIGHLIGHTS ============
-  const saveHighlights = (verses: number[]): Promise<void> => {
-    return new Promise((resolve) => {
-      if (!highlightStorageKey) {
-        console.warn('⚠ Cannot save highlights: invalid storage key');
-        resolve();
-        return;
-      }
-
+    if (!highlightStorageKey) return;
+    let cancelled = false;
+    void AsyncStorage.getItem(highlightStorageKey).then(raw => {
+      let verses: number[] = [];
       try {
-        // 1. Actualizar estado INMEDIATAMENTE (síncrono)
-        setHighlightedVerses((prev) => {
-          const updated = { ...prev, [highlightStorageKey]: verses };
-          console.log(`📝 State actualizado para ${highlightStorageKey}: ${verses.length} versículos`);
-          return updated;
-        });
+        const parsed = JSON.parse(raw || '[]');
+        if (Array.isArray(parsed)) verses = parsed.filter((n): n is number => typeof n === 'number' && n > 0);
+      } catch { /* damaged entry: start empty */ }
+      if (!cancelled) setHighlightedVerses(prev => ({ ...prev, [highlightStorageKey]: verses }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [highlightStorageKey]);
 
-        // 2. Guardar en storage DE FORMA SÍNCRONA
-        saveToStorage(highlightStorageKey, JSON.stringify(verses));
-        
-        // 3. Actualizar ref para acceso inmediato
-        highlightsRef.current[highlightStorageKey] = verses;
-
-        console.log(`✅ Highlights guardados permanentemente: ${highlightStorageKey} = [${verses.join(', ')}]`);
-        resolve();
-      } catch (e) {
-        console.error('❌ Error en saveHighlights:', e);
-        resolve();
-      }
-    });
+  const saveHighlights = (verses: number[]) => {
+    if (!highlightStorageKey) return;
+    setHighlightedVerses(prev => ({ ...prev, [highlightStorageKey]: verses }));
+    void AsyncStorage.setItem(highlightStorageKey, JSON.stringify(verses)).catch(() => undefined);
   };
 
   const collection = getCollectionById(collectionId);
@@ -335,23 +213,32 @@ function ChapterReaderContent() {
       highlighted: { backgroundColor: colors.highlight },
       selected: { backgroundColor: colors.selected },
       markedText: { color: colors.text },
+      // "Libro" typeface (Garamond); custom fonts need their own bold file instead of fontWeight.
+      font: settings.readerFont === 'libro' ? { fontFamily: GARAMOND.regular } : null,
+      fontBold: settings.readerFont === 'libro' ? { fontFamily: GARAMOND.bold, fontWeight: 'normal' as const } : null,
+      // Paragraph layout: small raised verse numbers inside the running text.
+      inlineNumber: { color: colors.number, fontSize: 12 * scale, fontWeight: '700' as const },
     };
-  }, [settings.textScale, theme]);
+  }, [settings.readerFont, settings.textScale, theme]);
+  const optionIcon = theme.id === 'clasico' ? '#F6EFD2' : theme.ui.primaryText;
   const [bookPickerOpen, setBookPickerOpen] = useState(false);
   const [chapterPickerBook, setChapterPickerBook] = useState<string | null>(null);
   const [chapterPickerFromHeader, setChapterPickerFromHeader] = useState(false);
-  const [bookPickerTestament, setBookPickerTestament] = useState<TestamentType>('antiguo');
+  // Opens on the testament of the book being read.
+  const [bookPickerTestament, setBookPickerTestament] = useState<TestamentType>(NEW_TESTAMENT_BOOKS.includes(book) ? 'nuevo' : 'antiguo');
   const [tanakhLanguage, setTanakhLanguage] = useState<TanakhLanguage>(tanakhLanguageParam === 'he' ? 'he' : 'es');
 
   // Bibles organized in Old / New Testament.
-  const isRv1960 = collection?.id === 'rv1960' || collection?.id === 'nbv';
+  const isRv1960 = collection?.id === 'rv1960' || collection?.id === 'nbv' || collection?.id === 'catolica';
   const isJewishCollection = collection?.id === 'jewish';
   const isCompactCollection = collection?.id === 'jewish' || collection?.id === 'catolica';
   const isHebrewTanakh = isJewishCollection && tanakhLanguage === 'he';
+  // Hebrew reads right to left, so it keeps one verse per line.
+  const paragraphLayout = settings.verseLayout === 'parrafo' && !isHebrewTanakh;
 
   const getDisplayBookName = (bookName: string) => {
     if (!isHebrewTanakh) {
-      return bookName;
+      return displayBookName(bookName);
     }
 
     return TANAKH_HEBREW_BOOK_LABELS[bookName] ?? bookName;
@@ -393,7 +280,7 @@ function ChapterReaderContent() {
     }
 
     if (collection.id === 'catolica') {
-      return CATHOLIC_BOOK_LIST;
+      return getCatholicBookList(bookPickerTestament);
     }
 
     if (collection.id === 'rv1960' || collection.id === 'nbv') {
@@ -415,6 +302,7 @@ function ChapterReaderContent() {
   const [chapterContent, setChapterContent] = useState<ChapterContent>({ source: 'missing', verses: [], note: 'No se pudo abrir la lectura. Revisa el libro y el capítulo seleccionados.' });
   const [retryCount, setRetryCount] = useState(0);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [optionsVerseNumber, setOptionsVerseNumber] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedVerseNumbers, setSelectedVerseNumbers] = useState<number[]>([]);
@@ -422,7 +310,8 @@ function ChapterReaderContent() {
   const selectedVerseSet = useMemo(() => new Set(selectedVerseNumbers), [selectedVerseNumbers]);
 
   const activeVerseNumbers = useMemo(() => {
-    if (optionsVerseNumber !== null && selectedVerseSet.has(optionsVerseNumber) && selectedVerseNumbers.length > 0) {
+    // While selecting, copy/share always act on the whole selection.
+    if (selectionMode && selectedVerseNumbers.length > 0) {
       return selectedVerseNumbers;
     }
 
@@ -431,7 +320,7 @@ function ChapterReaderContent() {
     }
 
     return selectedVerseNumbers;
-  }, [optionsVerseNumber, selectedVerseNumbers, selectedVerseSet]);
+  }, [optionsVerseNumber, selectedVerseNumbers, selectionMode]);
 
   // Remember this chapter for "Continuar leyendo" once it actually loaded.
   useEffect(() => {
@@ -451,6 +340,58 @@ function ChapterReaderContent() {
     return () => { cancelled = true; };
   }, [collectionId, book, chapterValue, retryCount, tanakhLanguage]);
 
+  // Space the bottom sheets keep above the phone's navigation buttons.
+  const sheetBottom = Math.max(24, insets.bottom + 16);
+
+  // ---- Lectura en voz alta: misma voz, velocidad, tono y segundo plano que el lector de PDF.
+  const scrollRef = useRef<ScrollView>(null);
+  const verseY = useRef<Record<number, number>>({});
+  const { speaking, readingVerse, toggle: toggleReading } = useBibleSpeech({
+    collectionId,
+    book,
+    chapter: chapterValue,
+    chapterCount,
+    verses: chapterContent.verses,
+    ready: !loading,
+    autoplay: readParam(params.autoplay) === '1',
+    versionTitle: collection?.title ?? 'Biblia',
+    goToChapter: (chapter, autoplay) => router.replace({
+      pathname: '/chapter-reader',
+      params: { collectionId, book, chapter: String(chapter), tanakhLanguage, ...(autoplay ? { autoplay: '1' } : {}) },
+    }),
+    showVerse: (verse) => {
+      const y = verseY.current[verse];
+      if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 120), animated: true });
+    },
+  });
+
+  // Opened from a bookmark or a search result: go to that verse and mark it for a moment.
+  const targetVerse = Number(readParam(params.verse) ?? '0');
+  const [flashVerse, setFlashVerse] = useState<number | null>(targetVerse > 0 ? targetVerse : null);
+  // While set, every new position of the target verse scrolls to it again: the section headings load
+  // a moment after the text and push the verses down. Cleared after a while or when the user scrolls.
+  const pendingTarget = useRef(targetVerse > 0 ? targetVerse : 0);
+  const scrollToVerse = (verse: number, animated: boolean) => {
+    const y = verseY.current[verse];
+    if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 120), animated });
+  };
+  /** Positions measured on the direct children of the scroll content (a verse row or a paragraph). */
+  const recordLayout = (verses: number[], y: number) => {
+    for (const verse of verses) verseY.current[verse] = y;
+    if (pendingTarget.current && verses.includes(pendingTarget.current)) scrollToVerse(pendingTarget.current, false);
+  };
+  useEffect(() => {
+    if (loading || targetVerse <= 0 || chapterContent.verses.length === 0) return;
+    // Android ignores (clamps) a scroll asked for before it knows the chapter's full height, so the
+    // jump is repeated while the chapter settles; onContentSizeChange below also retries it.
+    const retries = [80, 250, 500, 900, 1400, 2000].map(delay => setTimeout(() => {
+      if (pendingTarget.current) scrollToVerse(pendingTarget.current, false);
+    }, delay));
+    const settle = setTimeout(() => { pendingTarget.current = 0; }, 2600);
+    const clear = setTimeout(() => setFlashVerse(null), 3000);
+    return () => { retries.forEach(clearTimeout); clearTimeout(settle); clearTimeout(clear); };
+  }, [chapterContent, loading, targetVerse]);
+
   const getSortedVerseNumbers = (verseNumbers: number[]) => [...verseNumbers].sort((left, right) => left - right);
 
   const buildCitationReference = (verseNumbers: number[]) => {
@@ -459,14 +400,14 @@ function ChapterReaderContent() {
       return '';
     }
 
-    const startVerse = sortedVerseNumbers[0];
-    const endVerse = sortedVerseNumbers[sortedVerseNumbers.length - 1];
-
-    const displayBook = getDisplayBookName(book);
-
-    return startVerse === endVerse
-      ? `${displayBook} ${chapterValue}:${startVerse}`
-      : `${displayBook} ${chapterValue}:${startVerse}-${endVerse}`;
+    // Consecutive verses become ranges: 3, 4, 5, 7 → "3-5, 7".
+    const parts: string[] = [];
+    for (let i = 0; i < sortedVerseNumbers.length; i++) {
+      const start = sortedVerseNumbers[i];
+      while (sortedVerseNumbers[i + 1] === sortedVerseNumbers[i] + 1) i++;
+      parts.push(start === sortedVerseNumbers[i] ? String(start) : start + '-' + sortedVerseNumbers[i]);
+    }
+    return `${getDisplayBookName(book)} ${chapterValue}:${parts.join(', ')}`;
   };
 
   const buildCitationText = (verseNumbers: number[]) => {
@@ -479,7 +420,7 @@ function ChapterReaderContent() {
       rv1960: 'Reina-Valera 1960',
       jewish: isHebrewTanakh ? 'TaNakh Hebreo (Masorético)' : 'TaNakh',
       nbv: 'Nueva Biblia Viva (NBV)',
-      quran: 'El Coran',
+      quran: 'El Corán',
       catolica: 'Biblia Platense (Straubinger)',
     };
     const versionLabel = versionLabelByCollectionId[collection?.id ?? '']
@@ -491,7 +432,8 @@ function ChapterReaderContent() {
     const verseLines = sortedVerseNumbers
       .map((verseNumber) => {
         const verse = chapterContent.verses.find((item) => item.number === verseNumber);
-        return verse ? `*${verse.number}.* ${verse.text}` : null;
+        // A leading "»" continues a quotation from an earlier verse: out of context it only looks odd.
+        return verse ? `*${verse.label ?? verse.number}.* ${verse.text.replace(/^»/, '')}` : null;
       })
       .filter(Boolean)
       .join('\n'); // Espacios más cerrados entre versículos
@@ -500,7 +442,74 @@ function ChapterReaderContent() {
     return verseLines ? `${header}\n\n${verseLines}` : header;
   };
 
+  // A tap marks/unmarks in bookmark mode, or adds/removes the verse while selecting.
+  const onTapVerse = (verseNumber: number) => {
+    if (highlightMode) {
+      const current = highlightedVerses[highlightStorageKey] || [];
+      saveHighlights(current.includes(verseNumber)
+        ? current.filter((v) => v !== verseNumber)
+        : [...current, verseNumber].sort((a, b) => a - b));
+    }
+    if (selectionMode) onPressVerse(verseNumber);
+  };
+
+  // ---- Section headings (Catholic and NBV) and Straubinger's notes, loaded once the verses are on screen.
+  const [extras, setExtras] = useState<Record<number, VerseExtras>>({});
+  const [noteVerse, setNoteVerse] = useState<number | null>(null);
+  useEffect(() => {
+    if (loading || !hasChapterExtras(collectionId)) return;
+    const timer = setTimeout(() => {
+      // Extras of a verse that is not shown (omitted, like Mark 9:44 in the Platense, or inside a printed
+      // range) go to the previous verse on screen, so no heading or note is lost.
+      const lines = chapterContent.verses.map(verse => verse.number);
+      const placed: Record<number, VerseExtras> = {};
+      for (const [key, value] of Object.entries(getChapterExtras(collectionId, book, chapterValue))) {
+        const verse = Number(key);
+        const at = lines.includes(verse) ? verse : [...lines].reverse().find(line => line < verse) ?? lines[0];
+        if (at === undefined) continue;
+        const target = (placed[at] ??= {});
+        if (value.h) target.h = [...(target.h ?? []), ...value.h];
+        if (value.n) target.n = [...(target.n ?? []), ...value.n];
+      }
+      setExtras(placed);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [book, chapterContent, chapterValue, collectionId, loading]);
+  const headingVerses = useMemo(() => new Set(Object.entries(extras).filter(([, e]) => e.h).map(([verse]) => Number(verse))), [extras]);
+
+  const scale = settings.textScale;
+  const headingStyle: Record<HeadingKind, object> = {
+    // "I. DESDE LA CREACIÓN…" / "Primer canto": small spaced capitals.
+    M: [styles.majorHeading, { color: theme.reader.number, fontSize: 12 * scale, lineHeight: 18 * scale }],
+    // "La torre de Babel": italic, centered.
+    S: [styles.sectionHeading, themed.font, { color: theme.reader.heading, fontSize: 16 * scale, lineHeight: 23 * scale }],
+    // "Salmo de David, cuando huía…": the psalm's own title, quieter than a section heading.
+    D: [styles.psalmTitle, themed.font, { color: theme.reader.number, fontSize: 14 * scale, lineHeight: 20 * scale }],
+    // "La amada": who speaks next in the Song of Songs.
+    P: [styles.speakerLabel, { color: theme.reader.number, fontSize: 11 * scale, lineHeight: 16 * scale }],
+  };
+  const renderHeadings = (verseNumber: number) => extras[verseNumber]?.h?.map(([kind, text], i) => (
+    <Text key={'h' + verseNumber + i} style={headingStyle[kind] ?? headingStyle.S}>
+      {kind === 'P' ? text.toUpperCase() : text}
+    </Text>
+  ));
+
+  // Small tappable icon after a verse that has a note.
+  const noteMark = (verseNumber: number) => extras[verseNumber]?.n ? (
+    <Text accessibilityRole="button" accessibilityLabel={'Nota del versículo ' + verseNumber} onPress={() => setNoteVerse(verseNumber)}>
+      {' '}<MaterialIcons name="sticky-note-2" size={Math.round(15 * settings.textScale)} color={theme.reader.number} />
+    </Text>
+  ) : null;
+
+  // ---- Large initial letter of the chapter (with an opening quote or ¿ ¡ kept beside it).
+  const firstVerse = chapterContent.verses[0];
+  const capMatch = !isHebrewTanakh && firstVerse ? /^([«“"‘'¿¡(]*[A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/.exec(firstVerse.text) : null;
+  const dropCap = capMatch && firstVerse ? { letter: capMatch[1], rest: firstVerse.text.slice(capMatch[1].length) } : null;
+  const dropCapLetterStyle = [{ color: theme.reader.number }, settings.readerFont === 'libro' ? { fontFamily: GARAMOND.bold, fontWeight: 'normal' as const } : styles.dropCapSerif];
+
   const onLongPressVerse = (verseNumber: number) => {
+    // A soft vibration confirms the long press.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     setOptionsVerseNumber(verseNumber);
     setOptionsOpen(true);
   };
@@ -516,9 +525,7 @@ function ChapterReaderContent() {
 
   // Desactivar modo de marcado múltiple (SIN perder los datos marcados)
   const onUnhighlightVerse = () => {
-    // Importante: Aquí NO limpiamos los datos, solo salimos del modo
-    // Los highlights ya se guardan automáticamente en cada click
-    console.log(`✅ Saliendo del modo marcador - ${highlightedVerses[highlightStorageKey]?.length || 0} versículos marcados`);
+    // Only leaves the mode: every tap was already saved.
     setHighlightMode(false);
     setOptionsOpen(false);
   };
@@ -548,99 +555,49 @@ function ChapterReaderContent() {
       return;
     }
 
-    const sortedVerseNumbers = getSortedVerseNumbers(selectedVerseNumbers);
-    if (sortedVerseNumbers.length === 0) {
-      setSelectedVerseNumbers([verseNumber]);
-      return;
-    }
-
-    const minVerse = sortedVerseNumbers[0];
-    const maxVerse = sortedVerseNumbers[sortedVerseNumbers.length - 1];
-
+    // Any combination is allowed (3 and 7); the citation joins them as "3, 7".
     if (selectedVerseSet.has(verseNumber)) {
-      const remainingVerses = sortedVerseNumbers.filter((item) => item !== verseNumber);
-
-      if (remainingVerses.length === 0) {
-        setSelectedVerseNumbers([]);
-        setSelectionMode(false);
-        return;
-      }
-
-      const isStillContiguous = remainingVerses.every((item, index) => index === 0 || item === remainingVerses[index - 1] + 1);
-      if (isStillContiguous) {
-        setSelectedVerseNumbers(remainingVerses);
-        return;
-      }
-
-      const lowerBlock = remainingVerses.filter((item) => item < verseNumber);
-      const upperBlock = remainingVerses.filter((item) => item > verseNumber);
-
-      setSelectedVerseNumbers(lowerBlock.length >= upperBlock.length ? lowerBlock : upperBlock);
-
+      const remainingVerses = selectedVerseNumbers.filter((item) => item !== verseNumber);
+      setSelectedVerseNumbers(remainingVerses);
+      if (remainingVerses.length === 0) setSelectionMode(false);
       return;
     }
-
-    if (verseNumber === minVerse - 1 || verseNumber === maxVerse + 1) {
-      setSelectedVerseNumbers(getSortedVerseNumbers([...sortedVerseNumbers, verseNumber]));
-      return;
-    }
-
-    Alert.alert('Seleccion consecutiva', 'Solo puedes marcar versiculos consecutivos en orden ascendente o descendente.');
+    setSelectedVerseNumbers(getSortedVerseNumbers([...selectedVerseNumbers, verseNumber]));
   };
 
-  const onCopySelection = async () => {
-    const payload = buildCitationText(activeVerseNumbers);
-    if (!payload) {
-      return;
-    }
+  // Short message over the text ("Copiado"), gone by itself.
+  const [toast, setToast] = useState('');
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(''), 1800);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
-    await Clipboard.setStringAsync(payload);
+  const endSelection = () => {
     setOptionsOpen(false);
     setOptionsVerseNumber(null);
     setSelectionMode(false);
     setSelectedVerseNumbers([]);
-    Alert.alert('Copiado', 'La cita biblica completa se copio al portapapeles.');
   };
 
-  const onShareToWhatsApp = async () => {
+  const onCopySelection = async () => {
     const payload = buildCitationText(activeVerseNumbers);
-    if (!payload) {
-      return;
-    }
+    if (!payload) return;
+    const many = activeVerseNumbers.length > 1;
+    await Clipboard.setStringAsync(payload);
+    endSelection();
+    setToast(many ? 'Versículos copiados' : 'Versículo copiado');
+  };
 
+  // The phone's own share menu: WhatsApp, Telegram, Facebook, mail, messages…
+  const onShareSelection = async () => {
+    const payload = buildCitationText(activeVerseNumbers);
+    if (!payload) return;
     try {
-      await Clipboard.setStringAsync(payload);
-    } catch (e) {
-      console.warn('Error copying to clipboard:', e);
-    }
-
-    const encodedPayload = encodeURIComponent(payload);
-    const nativeUrl = `whatsapp://send?text=${encodedPayload}`;
-    const webUrl = `https://wa.me/?text=${encodedPayload}`;
-
-    try {
-      let canOpen = false;
-      try {
-        if (Platform.OS !== 'web') {
-          canOpen = await Linking.canOpenURL(nativeUrl);
-        }
-      } catch {
-        canOpen = false;
-      }
-
-      if (canOpen) {
-        await Linking.openURL(nativeUrl);
-      } else {
-        await Linking.openURL(webUrl);
-      }
-
-      setOptionsOpen(false);
-      setOptionsVerseNumber(null);
-      setSelectionMode(false);
-      setSelectedVerseNumbers([]);
-    } catch (e) {
-      console.warn('Error opening WhatsApp:', e);
-      Alert.alert('WhatsApp no disponible', 'No se pudo abrir WhatsApp en este dispositivo.');
+      const result = await Share.share({ message: payload });
+      if (result.action !== Share.dismissedAction) endSelection();
+    } catch {
+      Alert.alert('No se pudo compartir', 'Intenta de nuevo o usa «Copiar».');
     }
   };
 
@@ -672,28 +629,70 @@ function ChapterReaderContent() {
       <StatusBar style={theme.reader.statusBar} />
 
       <View style={[styles.header, themed.header]}>
-        <View style={styles.headerTextWrap}>
-          <Text style={styles.collectionLabel}>{collection?.title ?? 'Lectura'}</Text>
-          <View style={styles.chapterTitleRow}>
-            <Pressable style={[styles.bookSelectorButton, isCompactCollection && styles.bookSelectorButtonCompact]} onPress={() => setBookPickerOpen(true)}>
-              <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                style={[styles.chapterTitle, isCompactCollection && styles.chapterTitleCompact, isHebrewTanakh && styles.chapterTitleHebrew]}>
-                {getDisplayBookName(book)} ▾
-              </Text>
-            </Pressable>
-            <Pressable style={styles.chapterBadge} onPress={() => setChapterPickerFromHeader(true)}>
-              <Text style={styles.chapterBadgeText}>Cap. {chapterValue > 0 ? chapterValue : '-'} ▾</Text>
-            </Pressable>
-            <View style={styles.chapterTitleSpacer} />
-            <Pressable style={styles.backButtonInline} onPress={() => router.back()}>
-              <Text style={styles.backButtonInlineText}>Regresar</Text>
-            </Pressable>
+        <View style={styles.headerTop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Regresar"
+            onPress={() => router.back()}
+            hitSlop={6}
+            style={({ pressed }) => [styles.headerIconButton, pressed && styles.headerPressed]}>
+            <MaterialIcons name="arrow-back" size={22} color="#FFF3DF" />
+          </Pressable>
+
+          <View style={styles.headerCenter}>
+            <Text style={styles.collectionLabel} numberOfLines={1}>{collection?.title ?? 'Lectura'}</Text>
+            <View style={styles.chapterTitleRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Libro: ${getDisplayBookName(book)}. Cambiar de libro`}
+                onPress={() => setBookPickerOpen(true)}
+                style={({ pressed }) => [styles.bookSelectorButton, pressed && styles.headerPressed]}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  style={[styles.chapterTitle, isCompactCollection && styles.chapterTitleCompact, isHebrewTanakh && styles.chapterTitleHebrew]}>
+                  {getDisplayBookName(book)}
+                </Text>
+                <MaterialIcons name="expand-more" size={20} color="#E9D9B8" />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Capítulo ${chapterValue}. Cambiar de capítulo`}
+                onPress={() => setChapterPickerFromHeader(true)}
+                style={({ pressed }) => [styles.chapterBadge, pressed && styles.headerPressed]}>
+                <Text style={styles.chapterBadgeText}>{chapterValue > 0 ? chapterValue : '-'}</Text>
+                <MaterialIcons name="expand-more" size={16} color="#FFF3DF" />
+              </Pressable>
+            </View>
+            <Text style={styles.chapterMeta}>
+              {chapterCount > 0 && chapterValue > 0 ? `Capítulo ${chapterValue} de ${chapterCount}` : 'Capítulo seleccionado'}
+            </Text>
           </View>
-          <Text style={styles.chapterMeta}>
-            {chapterCount > 0 ? `${chapterCount} capitulos en este libro` : 'Capitulo seleccionado'}
-          </Text>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Buscar en esta Biblia"
+            onPress={() => setSearchOpen(true)}
+            hitSlop={6}
+            style={({ pressed }) => [styles.headerIconButton, pressed && styles.headerPressed]}>
+            <MaterialIcons name="search" size={22} color="#FFF3DF" />
+          </Pressable>
+          {!isHebrewTanakh ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={speaking ? 'Detener la lectura en voz alta' : 'Escuchar este libro en voz alta'}
+              disabled={loading || chapterContent.verses.length === 0}
+              onPress={toggleReading}
+              hitSlop={6}
+              style={({ pressed }) => [styles.headerIconButton, speaking && styles.listenButtonActive, pressed && styles.headerPressed]}>
+              <MaterialIcons name={speaking ? 'stop' : 'volume-up'} size={22} color="#FFF3DF" />
+            </Pressable>
+          ) : (
+            // Keeps the title centered when there is no listen button.
+            <View style={styles.headerIconSpacer} />
+          )}
+        </View>
           {isJewishCollection ? (
             <View style={styles.languageRow}>
               <View style={styles.languageToggleWrap}>
@@ -713,13 +712,16 @@ function ChapterReaderContent() {
               </Text>
             </View>
           ) : null}
-        </View>
       </View>
 
       <ScrollView
+        ref={scrollRef}
+        onScrollBeginDrag={() => { pendingTarget.current = 0; }}
+        // The chapter's height is now known: the jump to a bookmarked verse can no longer be clamped.
+        onContentSizeChange={() => { if (pendingTarget.current) scrollToVerse(pendingTarget.current, false); }}
         contentContainerStyle={[styles.content, themed.page, { paddingBottom: Math.max(24, insets.bottom + 14) }]}
         showsVerticalScrollIndicator={false}>
-        {chapterContent.heading ? <Text style={[styles.heading, themed.heading, isHebrewTanakh && styles.headingHebrew, isHebrewTanakh && themed.headingHebrew]}>{chapterContent.heading}</Text> : null}
+        {chapterContent.heading ? <Text style={[styles.heading, themed.heading, themed.fontBold, isHebrewTanakh && styles.headingHebrew, isHebrewTanakh && themed.headingHebrew]}>{chapterContent.heading}</Text> : null}
 
         {selectionMode && selectedVerseNumbers.length > 0 ? (
           <View style={styles.selectionInfoBar}>
@@ -749,60 +751,82 @@ function ChapterReaderContent() {
         {loading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator size="large" color="#6B7280" />
-            <Text style={styles.loadingText}>Cargando versiculos...</Text>
+            <Text style={styles.loadingText}>Cargando versículos…</Text>
           </View>
+        ) : chapterContent.verses.length > 0 && paragraphLayout ? (
+          paragraphBlocks(chapterContent.verses, headingVerses).map((block, blockIndex) => {
+            const paragraphStyle = [styles.verseText, styles.paragraphText, themed.verseText, themed.font];
+            // Each verse is two spans (its small number and its text) sharing the same touch and color.
+            const spans: DropCapSpan[] = block.flatMap((verse, i) => {
+              const marked = highlightedVerses[highlightStorageKey]?.includes(verse.number);
+              const active = selectedVerseSet.has(verse.number) || readingVerse === verse.number || flashVerse === verse.number;
+              const look = [marked && themed.highlighted, active && themed.selected, (marked || active) && [styles.verseTextSelected, themed.markedText, themed.fontBold]];
+              const touch = { onPress: () => onTapVerse(verse.number), onLongPress: () => onLongPressVerse(verse.number) };
+              const opensChapter = blockIndex === 0 && i === 0 && dropCap;
+              return [
+                ...(opensChapter ? [] : [{ key: 'n' + verse.number, text: (verse.label ?? verse.number) + ' ', style: [look, themed.inlineNumber], ...touch }]),
+                { key: 'v' + verse.number, text: (opensChapter ? dropCap.rest : verse.text) + ' ', style: look, ...touch, after: noteMark(verse.number) },
+              ];
+            });
+            return (
+              // Measured here, on the scroll content's direct child: the inner views report offsets inside it.
+              <View key={block[0].number} onLayout={(event) => recordLayout(block.map(verse => verse.number), event.nativeEvent.layout.y)}>
+                {renderHeadings(block[0].number)}
+                <View style={styles.paragraph}>
+                  {blockIndex === 0 && dropCap ? (
+                    <DropCapText letter={dropCap.letter} spans={spans} textStyle={paragraphStyle} letterStyle={dropCapLetterStyle} lineHeight={30 * settings.textScale} />
+                  ) : (
+                    <Text style={paragraphStyle}>
+                      {spans.map(span => (
+                        <Text key={span.key} style={span.style} onPress={span.onPress} onLongPress={span.onLongPress}>{span.text}{span.after}</Text>
+                      ))}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            );
+          })
         ) : chapterContent.verses.length > 0 ? (
-          chapterContent.verses.map((verse) => (
+          chapterContent.verses.map((verse, index) => {
+            const marked = (highlightedVerses[highlightStorageKey] || []).includes(verse.number);
+            const verseTextStyle = [
+              styles.verseText,
+              themed.verseText,
+              themed.font,
+              isHebrewTanakh && [styles.verseTextHebrew, themed.verseTextHebrew],
+              selectedVerseSet.has(verse.number) && [styles.verseTextSelected, themed.markedText, themed.fontBold],
+              marked && [styles.verseTextHighlighted, themed.markedText, themed.fontBold],
+            ];
+            const opensChapter = index === 0 && dropCap;
+            return (
+            <View key={verse.number} onLayout={(event) => recordLayout([verse.number], event.nativeEvent.layout.y)}>
+            {renderHeadings(verse.number)}
             <Pressable
-              key={verse.number}
               style={[
                 styles.verseRow,
                 isHebrewTanakh && styles.verseRowHebrew,
                 selectedVerseSet.has(verse.number) && [styles.verseRowSelected, themed.selected],
-                (highlightedVerses[highlightStorageKey] || []).includes(verse.number) && [styles.verseRowHighlighted, themed.highlighted],
+                readingVerse === verse.number && [styles.verseRowSelected, themed.selected],
+                marked && [styles.verseRowHighlighted, themed.highlighted],
+                flashVerse === verse.number && [styles.verseRowSelected, themed.selected],
               ]}
               onLongPress={() => onLongPressVerse(verse.number)}
-              onPress={() => {
-                if (highlightMode) {
-                  if (!highlightStorageKey) {
-                    console.warn('⚠ No se puede marcar: highlightStorageKey inválida');
-                    return;
-                  }
-
-                  const current = highlightedVerses[highlightStorageKey] || [];
-                  let updated: number[];
-
-                  if (current.includes(verse.number)) {
-                    // Desmarcar: filtrar el versículo
-                    updated = current.filter((v) => v !== verse.number);
-                    console.log(`🔴 Desmarcando: ${verse.number} | Antes: [${current.join(', ')}] | Después: [${updated.join(', ')}]`);
-                  } else {
-                    // Marcar: agregar el versículo
-                    updated = [...current, verse.number].sort((a, b) => a - b);
-                    console.log(`🟢 Marcando: ${verse.number} | Antes: [${current.join(', ')}] | Después: [${updated.join(', ')}]`);
-                  }
-
-                  // Guardar y actualizar
-                  saveHighlights(updated).catch((err) => {
-                    console.error('❌ Error al guardar highlights:', err);
-                  });
-                }
-
-                if (selectionMode) {
-                  onPressVerse(verse.number);
-                }
-              }}
+              onPress={() => onTapVerse(verse.number)}
               delayLongPress={280}>
-              <Text style={[styles.verseNumber, themed.verseNumber, verse.label ? styles.verseNumberRange : null, isHebrewTanakh && styles.verseNumberHebrew]}>{verse.label ?? verse.number}</Text>
-              <Text style={[
-                styles.verseText,
-                themed.verseText,
-                isHebrewTanakh && [styles.verseTextHebrew, themed.verseTextHebrew],
-                selectedVerseSet.has(verse.number) && [styles.verseTextSelected, themed.markedText],
-                (highlightedVerses[highlightStorageKey] || []).includes(verse.number) && [styles.verseTextHighlighted, themed.markedText],
-              ]}>{verse.text}</Text>
+              {opensChapter ? (
+                // The first verse opens with the large initial instead of its number.
+                <View style={styles.dropCapVerse}>
+                  <DropCapText letter={dropCap.letter} textStyle={[verseTextStyle, styles.noFlex]} letterStyle={dropCapLetterStyle}
+                    lineHeight={30 * settings.textScale} spans={[{ key: 'v', text: dropCap.rest, after: noteMark(verse.number) }]} />
+                </View>
+              ) : <>
+                <Text style={[styles.verseNumber, themed.verseNumber, verse.label ? styles.verseNumberRange : null, isHebrewTanakh && styles.verseNumberHebrew]}>{verse.label ?? verse.number}</Text>
+                <Text style={verseTextStyle}>{verse.text}{noteMark(verse.number)}</Text>
+              </>}
             </Pressable>
-          ))
+            </View>
+            );
+          })
         ) : (
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>No se pudo cargar</Text>
@@ -817,10 +841,10 @@ function ChapterReaderContent() {
         ) : null}
       </ScrollView>
 
-      <Modal visible={bookPickerOpen} transparent animationType="slide" onRequestClose={() => setBookPickerOpen(false)}>
+      <Sheet visible={bookPickerOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setBookPickerOpen(false)}>
         <View style={styles.overlayWrap}>
           <Pressable style={styles.overlayBg} onPress={() => setBookPickerOpen(false)} />
-          <View style={[styles.panelCard, isCompactCollection && styles.panelCardCompact]}>
+          <View style={[styles.panelCard, isCompactCollection && styles.panelCardCompact, { paddingBottom: sheetBottom }]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Seleccionar libro</Text>
               <Pressable style={styles.panelClose} onPress={() => setBookPickerOpen(false)}>
@@ -848,7 +872,7 @@ function ChapterReaderContent() {
               </View>
             )}
 
-            <ScrollView contentContainerStyle={styles.panelBookList} showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelBookList} showsVerticalScrollIndicator={false}>
               {bookPickerItems.map((item, index) => {
                 if (item.type === 'section') {
                   const sectionLabel = isHebrewTanakh ? getDisplaySectionName(item.label) : item.label;
@@ -871,7 +895,7 @@ function ChapterReaderContent() {
                   );
                 }
 
-                const itemLabel = isHebrewTanakh ? getDisplayBookName(item.book) : item.label;
+                const itemLabel = isHebrewTanakh ? getDisplayBookName(item.book) : displayBookName(item.label);
 
                 return (
                   <Pressable
@@ -886,9 +910,9 @@ function ChapterReaderContent() {
             </ScrollView>
           </View>
         </View>
-      </Modal>
+      </Sheet>
 
-      <Modal visible={chapterPickerBook !== null || chapterPickerFromHeader} transparent animationType="slide" onRequestClose={() => {
+      <Sheet visible={chapterPickerBook !== null || chapterPickerFromHeader} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => {
         setChapterPickerBook(null);
         setChapterPickerFromHeader(false);
       }}>
@@ -897,7 +921,7 @@ function ChapterReaderContent() {
             setChapterPickerBook(null);
             setChapterPickerFromHeader(false);
           }} />
-          <View style={styles.panelCard}>
+          <View style={[styles.panelCard, { paddingBottom: sheetBottom }]}>
             <View style={styles.panelHeader}>
               <View>
                 <Text style={[styles.panelTitle, isHebrewTanakh && styles.panelTitleHebrew]}>
@@ -915,30 +939,39 @@ function ChapterReaderContent() {
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={styles.chapterGrid} showsVerticalScrollIndicator={false}>
-              {Array.from({ length: getCollectionChapterCount(collectionId, chapterPickerFromHeader ? book : (chapterPickerBook ?? '')) || 1 }, (_, idx) => idx + 1).map((chapter) => (
-                <Pressable key={chapter} style={[styles.chapterChip, chapter === chapterValue && styles.chapterChipActive]} onPress={() => onSelectChapterFromPanel(chapter)}>
-                  <Text style={[styles.chapterChipText, chapter === chapterValue && styles.chapterChipTextActive]}>{chapter}</Text>
-                </Pressable>
-              ))}
+            <ScrollView style={styles.panelScroll} contentContainerStyle={styles.chapterGrid} showsVerticalScrollIndicator={false}>
+              {Array.from({ length: getCollectionChapterCount(collectionId, chapterPickerFromHeader ? book : (chapterPickerBook ?? '')) || 1 }, (_, idx) => idx + 1).map((chapter) => {
+                // Only the chapter being read is marked, not the same number in another book.
+                const current = chapter === chapterValue && (chapterPickerFromHeader || chapterPickerBook === book);
+                return (
+                  <Pressable key={chapter} style={[styles.chapterChip, current && styles.chapterChipActive]} onPress={() => onSelectChapterFromPanel(chapter)}>
+                    <Text style={[styles.chapterChipText, current && styles.chapterChipTextActive]}>{chapter}</Text>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </View>
         </View>
-      </Modal>
+      </Sheet>
 
-      <Modal visible={optionsOpen} transparent animationType="fade" onRequestClose={() => setOptionsOpen(false)}>
+      <Sheet visible={optionsOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={() => setOptionsOpen(false)}>
         <View style={styles.overlayWrap}>
           <Pressable style={styles.overlayBg} onPress={() => setOptionsOpen(false)} />
-          <View style={styles.optionsCard}>
+          <View style={[styles.optionsCard, { marginBottom: 26 + insets.bottom }]}>
             {/* MODO SELECCIÓN DE VERSÍCULOS */}
             {selectionMode && selectedVerseNumbers.length > 0 ? (
               <>
-                <Text style={styles.optionsTitle}>Versículos seleccionados: {selectedVerseNumbers.length}</Text>
+                <Text style={styles.optionsTitle}>{buildCitationReference(selectedVerseNumbers)}</Text>
+                <Text style={styles.optionsHint}>
+                  {selectedVerseNumbers.length === 1 ? '1 versículo seleccionado' : selectedVerseNumbers.length + ' versículos seleccionados'}
+                </Text>
                 <Pressable style={styles.optionsButton} onPress={onCopySelection}>
+                  <MaterialIcons name="content-copy" size={18} color={optionIcon} />
                   <Text style={styles.optionsButtonText}>Copiar texto completo</Text>
                 </Pressable>
-                <Pressable style={styles.optionsButton} onPress={onShareToWhatsApp}>
-                  <Text style={styles.optionsButtonText}>Compartir por WhatsApp</Text>
+                <Pressable style={styles.optionsButton} onPress={onShareSelection}>
+                  <MaterialIcons name="share" size={18} color={optionIcon} />
+                  <Text style={styles.optionsButtonText}>Compartir…</Text>
                 </Pressable>
                 <Pressable style={[styles.optionsButton, styles.optionsButtonCancel]} onPress={() => {
                   setSelectionMode(false);
@@ -970,7 +1003,19 @@ function ChapterReaderContent() {
               </>
             ) : /* MENÚ PRINCIPAL */ (
               <>
-                <Text style={styles.optionsTitle}>Opciones del versículo</Text>
+                <Text style={styles.optionsTitle}>
+                  {optionsVerseNumber !== null ? buildCitationReference([optionsVerseNumber]) : 'Opciones del versículo'}
+                </Text>
+                <View style={styles.optionsRow}>
+                  <Pressable style={[styles.optionsButton, styles.optionsButtonHalf]} onPress={onCopySelection}>
+                    <MaterialIcons name="content-copy" size={18} color={optionIcon} />
+                    <Text style={styles.optionsButtonText}>Copiar</Text>
+                  </Pressable>
+                  <Pressable style={[styles.optionsButton, styles.optionsButtonHalf]} onPress={onShareSelection}>
+                    <MaterialIcons name="share" size={18} color={optionIcon} />
+                    <Text style={styles.optionsButtonText}>Compartir</Text>
+                  </Pressable>
+                </View>
                 <Pressable style={styles.optionsButton} onPress={onToggleSelectionMode}>
                   <Text style={styles.optionsButtonText}>Seleccionar versículos</Text>
                 </Pressable>
@@ -978,45 +1023,97 @@ function ChapterReaderContent() {
                   <Text style={styles.optionsButtonText}>Marcar versículos</Text>
                 </Pressable>
                 {typeof optionsVerseNumber === 'number' && (highlightedVerses[highlightStorageKey] || []).includes(optionsVerseNumber) && (
-                  <Pressable 
-                    style={styles.optionsButton} 
+                  <Pressable
+                    style={styles.optionsButton}
                     onPress={() => {
-                      if (typeof optionsVerseNumber !== 'number') {
-                        console.error('❌ optionsVerseNumber no es un número válido');
-                        return;
-                      }
-
-                      if (!highlightStorageKey) {
-                        console.error('❌ highlightStorageKey está vacía');
-                        return;
-                      }
-
-                      const current = highlightedVerses[highlightStorageKey] || [];
-                      const updated = current.filter((v: number) => v !== optionsVerseNumber);
-
-                      console.log(`🔴 Desmarcando desde menú: versículo ${optionsVerseNumber}`);
-                      console.log(`   Antes: [${current.join(', ')}]`);
-                      console.log(`   Después: [${updated.join(', ')}]`);
-
-                      // Guardar los cambios
-                      saveHighlights(updated)
-                        .then(() => {
-                          console.log('✅ Versículo desmarcado y guardado');
-                          setOptionsOpen(false);
-                          setOptionsVerseNumber(null);
-                        })
-                        .catch((err) => {
-                          console.error('❌ Error al desmarcar:', err);
-                        });
+                      saveHighlights((highlightedVerses[highlightStorageKey] || []).filter((v) => v !== optionsVerseNumber));
+                      setOptionsOpen(false);
+                      setOptionsVerseNumber(null);
                     }}>
                     <Text style={styles.optionsButtonText}>Desmarcar este versículo</Text>
                   </Pressable>
                 )}
+                <Pressable style={[styles.optionsButton, styles.optionsButtonCancel]} onPress={() => {
+                  setOptionsOpen(false);
+                  setOptionsVerseNumber(null);
+                }}>
+                  <Text style={styles.optionsButtonText}>Salir</Text>
+                </Pressable>
               </>
             )}
           </View>
         </View>
-      </Modal>
+      </Sheet>
+
+      {/* Search without leaving the chapter: a result opens its verse here; a book opens its chapters. */}
+      <Sheet visible={searchOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setSearchOpen(false)}>
+        <View style={styles.overlayWrap}>
+          <Pressable style={styles.overlayBg} onPress={() => setSearchOpen(false)} />
+          <View style={[styles.searchSheet, { backgroundColor: theme.ui.page, paddingTop: 14 }]}>
+            <View style={styles.panelHeader}>
+              <Text style={[styles.panelTitle, { color: theme.ui.text }]}>Buscar en {collection?.shortName ?? 'esta Biblia'}</Text>
+              <Pressable style={styles.panelClose} accessibilityLabel="Cerrar búsqueda" onPress={() => setSearchOpen(false)}>
+                <Text style={styles.panelCloseText}>✕</Text>
+              </Pressable>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: sheetBottom }} showsVerticalScrollIndicator={false}>
+              <BibleSearch collectionId={collectionId} theme={theme} autoFocus onActiveChange={() => undefined}
+                onOpenVerse={(targetBook, chapter, verse) => {
+                  setSearchOpen(false);
+                  router.replace({
+                    pathname: '/chapter-reader',
+                    params: { collectionId, book: targetBook, chapter: String(chapter), tanakhLanguage, ...(verse ? { verse: String(verse) } : {}) },
+                  });
+                }}
+                onPickBook={(targetBook) => { setSearchOpen(false); setChapterPickerBook(targetBook); }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Sheet>
+
+      {/* Mons. Straubinger's note(s) for the tapped verse. */}
+      <Sheet visible={noteVerse !== null} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setNoteVerse(null)}>
+        <View style={styles.overlayWrap}>
+          <Pressable style={styles.overlayBg} onPress={() => setNoteVerse(null)} />
+          <View style={[styles.noteSheet, { backgroundColor: theme.reader.page, paddingBottom: sheetBottom }]}>
+            <View style={styles.panelHeader}>
+              <View style={styles.noteHeaderText}>
+                <Text style={[styles.noteKicker, { color: theme.reader.number }]}>{NOTE_SOURCES[collectionId]?.title ?? 'NOTA'}</Text>
+                <Text style={[styles.panelTitle, { color: theme.reader.heading }]}>
+                  {noteVerse !== null ? `${getDisplayBookName(book)} ${chapterValue}:${noteVerse}` : ''}
+                </Text>
+              </View>
+              <Pressable style={styles.panelClose} accessibilityLabel="Cerrar nota" onPress={() => setNoteVerse(null)}>
+                <Text style={styles.panelCloseText}>✕</Text>
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.noteBody}>
+              {(noteVerse !== null ? extras[noteVerse]?.n ?? [] : []).map(([label, text], i) => (
+                <View key={i} style={styles.noteItem}>
+                  {label && label !== String(noteVerse) ? (
+                    <Text style={[styles.noteLabel, { color: theme.reader.number }]}>v. {label}</Text>
+                  ) : null}
+                  <Text style={[styles.noteText, themed.font, { color: theme.reader.text, fontSize: 16 * settings.textScale, lineHeight: 25 * settings.textScale }]}>
+                    {noteSegments(text).map((segment, j) => segment.italic
+                      ? <Text key={j} style={styles.noteItalic}>{segment.text}</Text>
+                      : segment.text)}
+                  </Text>
+                </View>
+              ))}
+              {NOTE_SOURCES[collectionId] ? (
+                <Text style={[styles.noteSource, { color: theme.reader.number }]}>{NOTE_SOURCES[collectionId].source}</Text>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Sheet>
+
+      {toast ? (
+        <View pointerEvents="none" style={[styles.toast, { bottom: 40 + insets.bottom }]}>
+          <MaterialIcons name="check-circle" size={18} color="#FFF7E9" />
+          <Text style={styles.toastText}>{toast}</Text>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1039,76 +1136,85 @@ const baseStyles = StyleSheet.create({
     backgroundColor: '#F6EFD2',
   },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 12,
-    minHeight: 108,
-    borderBottomWidth: 1,
-    borderBottomColor: '#6A4325',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 14,
     backgroundColor: '#2F1E12',
-    gap: 12,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 6,
+    zIndex: 2,
   },
-  headerTextWrap: {
-    gap: 4,
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+    minWidth: 0,
+  },
+  headerIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  headerIconSpacer: {
+    width: 42,
+  },
+  headerPressed: {
+    opacity: 0.7,
   },
   chapterTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#2F1E12',
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#5C3E24',
+    justifyContent: 'center',
+    gap: 8,
+    maxWidth: '100%',
   },
-  chapterTitleSpacer: {
-    flex: 1,
-  },
-  backButtonInline: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#6A4325',
-    borderWidth: 1,
-    borderColor: '#8A5A33',
-  },
-  backButtonInlineText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#F6EFD2',
+  listenButtonActive: {
+    backgroundColor: '#A3542A',
+    borderColor: '#E0A06A',
   },
   bookSelectorButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    backgroundColor: '#6A4325',
-    borderWidth: 1,
-    borderColor: '#8A5A33',
-    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
     flexShrink: 1,
-    maxWidth: '70%',
-  },
-  bookSelectorButtonCompact: {
-    maxWidth: '62%',
+    minWidth: 0,
+    paddingLeft: 6,
+    paddingRight: 2,
+    borderRadius: 10,
   },
   collectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
+    fontSize: 11,
+    letterSpacing: 1.6,
     textTransform: 'uppercase',
-    color: '#D9C7A8',
+    color: 'rgba(246,239,210,0.72)',
     fontWeight: '700',
   },
   chapterTitle: {
-    fontSize: 16,
-    lineHeight: 26,
-    color: '#F6EFD2',
+    flexShrink: 1,
+    fontSize: 22,
+    lineHeight: 30,
+    color: '#FFF8E7',
     fontWeight: '700',
     fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
   },
   chapterTitleCompact: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 19,
+    lineHeight: 26,
   },
   chapterTitleHebrew: {
     writingDirection: 'rtl',
@@ -1116,21 +1222,24 @@ const baseStyles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   chapterBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 11,
+    paddingRight: 5,
+    paddingVertical: 3,
     borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderWidth: 1,
-    borderColor: '#8A5A33',
-    backgroundColor: '#6A4325',
+    borderColor: 'rgba(255,255,255,0.26)',
   },
   chapterBadgeText: {
-    fontSize: 13,
-    color: '#F6EFD2',
-    fontWeight: '700',
+    fontSize: 15,
+    color: '#FFF8E7',
+    fontWeight: '800',
   },
   chapterMeta: {
-    fontSize: 13,
-    color: '#D9C7A8',
+    fontSize: 12,
+    color: 'rgba(246,239,210,0.66)',
   },
   languageRow: {
     marginTop: 8,
@@ -1167,6 +1276,10 @@ const baseStyles = StyleSheet.create({
     color: '#FFF7E9',
   },
   content: {
+    // On tablets the text keeps a comfortable line length instead of spanning the whole screen.
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     paddingHorizontal: 22,
     paddingTop: 20,
     paddingBottom: 32,
@@ -1187,6 +1300,13 @@ const baseStyles = StyleSheet.create({
     writingDirection: 'rtl',
     // ...existing code...
     lineHeight: 30,
+  },
+  paragraph: {
+    marginBottom: 6,
+  },
+  paragraphText: {
+    flex: 0,
+    textAlign: 'justify',
   },
   verseRow: {
     flexDirection: 'row',
@@ -1315,6 +1435,9 @@ const baseStyles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  panelScroll: {
+    flexShrink: 1,
+  },
   overlayBg: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(106, 67, 37, 0.5)',
@@ -1384,6 +1507,116 @@ const baseStyles = StyleSheet.create({
     fontWeight: '800',
     fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
   },
+  majorHeading: {
+    textAlign: 'center',
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    marginTop: 14,
+    marginBottom: 2,
+    paddingHorizontal: 10,
+  },
+  sectionHeading: {
+    textAlign: 'center',
+    fontStyle: 'italic',
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
+  },
+  psalmTitle: {
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
+  },
+  speakerLabel: {
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  dropCapVerse: {
+    flex: 1,
+  },
+  dropCapSerif: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
+  },
+  noFlex: {
+    flex: 0,
+  },
+  noteSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 16,
+    paddingHorizontal: 18,
+    maxHeight: '80%',
+  },
+  noteHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  noteKicker: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+  },
+  noteBody: {
+    gap: 14,
+    paddingBottom: 8,
+  },
+  noteItem: {
+    gap: 4,
+  },
+  noteLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  noteText: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: undefined }),
+  },
+  noteItalic: {
+    fontStyle: 'italic',
+  },
+  noteSource: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    opacity: 0.8,
+    marginTop: 4,
+  },
+  searchSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    height: '88%',
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  optionsButtonHalf: {
+    flex: 1,
+  },
+  toast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(30,20,12,0.92)',
+  },
+  toastText: {
+    color: '#FFF7E9',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   optionsButton: {
     borderRadius: 12,
     backgroundColor: '#6A4325',
@@ -1391,6 +1624,9 @@ const baseStyles = StyleSheet.create({
     borderColor: '#8A5A33',
     paddingHorizontal: 14,
     paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   optionsButtonText: {
     fontSize: 15,
@@ -1518,7 +1754,7 @@ const baseStyles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    paddingBottom: 8,
+    paddingBottom: 16,
     justifyContent: 'center',
     alignItems: 'flex-start',
   },

@@ -1,7 +1,11 @@
 import { requireOptionalNativeModule } from 'expo';
 
 export type ReaderAudioBatch = { pages: number[]; texts: string[]; paragraphEnds: boolean[]; complete: boolean };
-export type ReaderAudioStartOptions = { session: number; title: string; voiceId: string | null; rate: number; pitch: number };
+export type ReaderAudioStartOptions = {
+  session: number; title: string; voiceId: string | null; rate: number; pitch: number;
+  /** 'bible': pages are chapter * 1000 + verse, shown as chapter and verse. Defaults to PDF pages. */
+  pageMode?: 'page' | 'bible';
+};
 export type ReaderAudioState = { active: boolean; playing: boolean; page?: number | null; session?: number };
 
 type Subscription = { remove(): void };
