@@ -6,6 +6,7 @@ import { ReaderAudio } from '@/modules/reader-audio';
 import { loadSpanishVoices, loadSpeechSettings, saveSpeechSettings, speakWithFallback } from '@/constants/speech-engine';
 import { DEFAULT_SPEECH_SETTINGS, pickVoice, SpeechSettings } from '@/constants/speech-voices';
 import { VoiceSettingsSheet } from '@/components/voice-settings-sheet';
+import { addPDFMark, loadPDFMarks, PDFMark, removePDFMark } from '@/constants/pdf-marks';
 import { getLocalFileSize, MAX_PDF_BYTES, resolveOwnedPDFUri } from '@/constants/pdf-storage-service';
 import { isViewerNavigation, loadPDFViewerSource, PDFViewerSource, sendPDFData } from '@/constants/pdf-webview-bridge';
 import { readFileAsBase64Safe } from '@/constants/safe-file-reader';
@@ -14,7 +15,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { ActivityIndicator, Alert, AppState, DimensionValue, PermissionsAndroid, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Alert, AppState, DimensionValue, KeyboardAvoidingView, PermissionsAndroid, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
@@ -27,6 +28,8 @@ const VOICE_FALLBACK_NOTICE = 'La voz elegida no respondió; se usa la voz prede
 
 /** A reading handed to the native background service (APK only). */
 type BackgroundReading = { session: number; started: boolean; chain: Promise<void> };
+/** The passage highlighted on the page while marking (boxes are fractions of the page). */
+type MarkSelection = { page: number; text: string; rects: number[][]; count: number };
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const utteranceLimit = () => Number.isFinite(Speech.maxSpeechInputLength)
   ? Math.min(MAX_UTTERANCE_CHARS, Math.max(32, Speech.maxSpeechInputLength - 32)) : MAX_UTTERANCE_CHARS;
@@ -72,6 +75,8 @@ function readerTheme(theme: AppTheme) {
         button: { backgroundColor: ui.soft }, buttonText: { color: ui.text },
         primary: { backgroundColor: ui.primary }, primaryText: { color: ui.primaryText },
         notice: { backgroundColor: ui.notice }, noticeText: { color: ui.noticeText },
+        markHint: { color: ui.text }, markPreview: { color: ui.muted },
+        noteInput: { backgroundColor: ui.soft, color: ui.text, borderColor: ui.border },
       }),
     };
   readerStylesCache.set(theme.id, value);
@@ -97,8 +102,11 @@ export default function PDFReader() {
   const router = useRouter();
   const { theme: appTheme } = useAppSettings();
   const { styles, spinner, onPrimary, documentBackground } = readerTheme(appTheme);
-  const params = useLocalSearchParams<{ bookmarkId?: string | string[] }>();
-  const id = Array.isArray(params.bookmarkId) ? params.bookmarkId[0] : params.bookmarkId;
+  const params = useLocalSearchParams<{ bookmarkId?: string | string[]; page?: string | string[]; markId?: string | string[] }>();
+  const first = (value?: string | string[]) => Array.isArray(value) ? value[0] : value;
+  const id = first(params.bookmarkId);
+  // Opened from a PDF bookmark: start on its page (only on the first load) and make its highlight blink.
+  const target = useRef({ page: Number(first(params.page)), markId: first(params.markId) });
   const [book, setBook] = useState<PDFBookmark | null>(null);
   const [source, setSource] = useState<PDFViewerSource | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -113,6 +121,12 @@ export default function PDFReader() {
   const [voiceSheet, setVoiceSheet] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [notice, setNotice] = useState('');
+  const [marks, setMarks] = useState<PDFMark[]>([]);
+  // Marking mode: `words` is how many words the page has (null while they load).
+  const [marking, setMarking] = useState<{ words: number | null; selection: MarkSelection | null } | null>(null);
+  const [markNote, setMarkNote] = useState('');
+  const marksRef = useRef<PDFMark[]>([]);
+  const flashTarget = useRef<string | undefined>(undefined);
   const viewer = useRef<WebView>(null);
   const data = useRef('');
   const initialPage = useRef(1);
@@ -215,6 +229,20 @@ export default function PDFReader() {
       const [base64, viewerSource] = await Promise.all([readFileAsBase64Safe(fileUri), loadPDFViewerSource()]);
       if (cancelled) return;
       initialPage.current = Number.isInteger(saved.currentPage) && saved.currentPage > 0 ? saved.currentPage : 1;
+      const { page: markPage, markId } = target.current;
+      target.current = { page: NaN, markId: undefined };
+      if (Number.isInteger(markPage) && markPage > 0) initialPage.current = markPage;
+      flashTarget.current = markId;
+      void loadPDFMarks().then(all => {
+        if (cancelled) return;
+        const mine = all.filter(mark => mark.docId === id);
+        setMarks(mine);
+        const opened = mine.find(mark => mark.id === markId);
+        if (opened?.note) setNotice('Tu nota: ' + opened.note);
+        else if (opened && !opened.rects) setNotice(opened.text
+          ? 'Este marcador se guardó antes de poder resaltarse en la página. Puedes volver a marcarlo con «Marcar».'
+          : 'Marcaste esta página completa.');
+      });
       data.current = base64;
       pageRef.current = initialPage.current;
       titleRef.current = saved.displayName;
@@ -343,6 +371,19 @@ export default function PDFReader() {
     }
     stopSpeech(); setNotice(''); inject('window.goToPage(' + number + ')');
   }, [inject, stopSpeech]);
+  // Tapping a highlight on the page shows the passage and its note, with the option to remove it.
+  const showMark = useCallback((markId: string) => {
+    const mark = marksRef.current.find(item => item.id === markId);
+    if (!mark) return;
+    const passage = mark.text.length > 300 ? mark.text.slice(0, 300) + '…' : mark.text;
+    Alert.alert('Marcador · página ' + mark.page, (mark.note ? 'Tu nota: ' + mark.note + '\n\n' : '') + '«' + passage + '»', [
+      { text: 'Cerrar', style: 'cancel' },
+      { text: 'Quitar marcador', style: 'destructive', onPress: () => {
+        removePDFMark(mark.id).then(() => setMarks(list => list.filter(item => item.id !== mark.id)))
+          .catch(() => setNotice('No se pudo quitar el marcador. Vuelve a intentarlo.'));
+      } },
+    ]);
+  }, []);
   const onMessage = useCallback((event: WebViewMessageEvent) => {
     let message;
     try { message = JSON.parse(event.nativeEvent.data); } catch { setNotice('El visor no pudo procesar una respuesta.'); return; }
@@ -375,10 +416,18 @@ export default function PDFReader() {
       void readText(message.text, message.page, message.requestId);
     } else if (message.type === 'SPEECH_ERROR' && message.requestId === speechSession.current) {
       finishSpeech(String(message.error));
+    } else if (message.type === 'MARK_MODE') {
+      setMarking(current => current && { ...current, words: Number(message.words) || 0 });
+    } else if (message.type === 'MARK_SELECTION') {
+      const selection = message.count > 0 && typeof message.text === 'string' && Array.isArray(message.rects)
+        ? { page: Number(message.page), text: message.text, rects: message.rects, count: Number(message.count) } : null;
+      setMarking(current => current && { ...current, selection });
+    } else if (message.type === 'MARK_TAPPED' && typeof message.id === 'string') {
+      showMark(message.id);
     } else if (message.type === 'PDF_ERROR') {
       stopSpeech(); data.current = ''; setError(String(message.error)); setStatus('error');
     }
-  }, [finishSpeech, go, id, inject, readText, receivePageTexts, stopSpeech]);
+  }, [finishSpeech, go, id, inject, readText, receivePageTexts, showMark, stopSpeech]);
   const changeZoom = (value: number) => {
     const next = Math.max(0.5, Math.min(3, value));
     setZoom(next); inject('window.setPDFZoom(' + next + ')');
@@ -404,6 +453,39 @@ export default function PDFReader() {
     if (status !== 'ready') return;
     inject("document.documentElement.style.background=document.body.style.background='" + documentBackground + "'");
   }, [documentBackground, inject, status]);
+  // The saved highlights are drawn on the page; one opened from the bookmarks blinks once it is there.
+  useEffect(() => {
+    marksRef.current = marks;
+    if (status !== 'ready') return;
+    inject('window.setMarks(' + JSON.stringify(marks.map(mark => ({ id: mark.id, page: mark.page, rects: mark.rects ?? null }))) + ')');
+    const target = flashTarget.current;
+    if (target && marks.some(mark => mark.id === target)) {
+      flashTarget.current = undefined;
+      inject('window.flashMark(' + JSON.stringify(target) + ')');
+    }
+  }, [inject, marks, status]);
+  const startMarking = () => {
+    stopSpeech(); setNotice(''); setMarkNote('');
+    setMarking({ words: null, selection: null });
+    inject('window.setMarkMode(true)');
+  };
+  const stopMarking = () => {
+    setMarking(null);
+    inject('window.setMarkMode(false)');
+  };
+  const saveMark = (wholePage: boolean) => {
+    const selection = marking?.selection;
+    if (!id || (!wholePage && !selection)) return;
+    const pageNumber = (!wholePage && selection?.page) || pageRef.current;
+    addPDFMark(id, pageNumber, wholePage ? '' : selection!.text, markNote, wholePage ? undefined : selection!.rects)
+      .then(mark => { setMarks(list => [...list, mark]); setNotice('Marcador guardado. También lo encontrarás en Marcadores › Documentos PDF.'); })
+      .catch(() => setNotice('No se pudo guardar el marcador. Vuelve a intentarlo.'));
+    stopMarking();
+  };
+  const markHint = !marking ? '' : marking.words === null ? 'Preparando el texto de la página…'
+    : marking.words === 0 ? 'Esta página es una imagen y no tiene texto para resaltar. Puedes marcar la página completa.'
+      : !marking.selection ? 'Desliza el dedo sobre el texto de la página para resaltarlo. Para alargarlo, toca la palabra donde termina.'
+        : 'Puedes ajustar el resaltado o guardarlo.';
   const ready = status === 'ready';
   const back = () => { stopSpeech(); router.back(); };
   const progressWidth = ((total ? page / total * 100 : 0) + '%') as DimensionValue;
@@ -413,12 +495,15 @@ export default function PDFReader() {
     <Stack.Screen options={{ headerShown: false }} />
     <StatusBar style={appTheme.ui.statusBar} />
     <SafeAreaView style={styles.screen}>
+      {/* The app draws behind the keyboard (edge to edge): lift the footer so the note being typed stays visible. */}
+      <KeyboardAvoidingView behavior="padding" style={styles.keyboard}>
       <View style={styles.header}>
         <Button title="‹ Biblioteca" onPress={back} />
         <View style={styles.heading}>
           <Text style={styles.eyebrow}>LECTURA PERSONAL</Text>
           <Text style={styles.title} numberOfLines={1}>{book?.displayName || 'Documento PDF'}</Text>
         </View>
+        {!marking && <Control label="Marcar" icon="border-color" disabled={!ready} onPress={startMarking} />}
       </View>
       <View style={styles.progress}><View style={[styles.progressFill, { width: progressWidth }]} /></View>
       <View style={styles.document}>
@@ -442,7 +527,32 @@ export default function PDFReader() {
         </>}
       </View>
       {!!notice && <Pressable accessibilityRole="button" accessibilityLabel="Cerrar aviso" onPress={() => setNotice('')} style={styles.notice}><Text style={styles.noticeText}>{notice}  ×</Text></Pressable>}
-      <View style={styles.footer}>
+      {marking ? <View style={styles.footer}>
+        <View style={styles.markHeader}>
+          <MaterialIcons name="border-color" size={20} color={spinner} />
+          <Text style={styles.markHint}>{markHint}</Text>
+        </View>
+        {marking.selection && <>
+          <Text style={styles.markPreview} numberOfLines={2}>«{marking.selection.text}»</Text>
+          <TextInput value={markNote} onChangeText={setMarkNote} placeholder="Añadir una nota (opcional)" placeholderTextColor={spinner}
+            maxLength={300} style={styles.noteInput} />
+        </>}
+        <View style={styles.markActions}>
+          <Control label="Cancelar" onPress={stopMarking} />
+          {marking.selection && <Control label="Borrar" icon="backspace" onPress={() => inject('window.clearMarkSelection()')} />}
+          {marking.words === 0 ? (
+            <Pressable accessibilityRole="button" onPress={() => saveMark(true)} style={({ pressed }) => [styles.listen, styles.markSave, pressed && styles.dimmed]}>
+              <Text style={styles.listenText}>Marcar página completa</Text>
+            </Pressable>
+          ) : (
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: !marking.selection }} disabled={!marking.selection}
+              onPress={() => saveMark(false)} style={({ pressed }) => [styles.listen, styles.markSave, (!marking.selection || pressed) && styles.dimmed]}>
+              <MaterialIcons name="bookmark" size={20} color={onPrimary} />
+              <Text style={styles.listenText}>Guardar</Text>
+            </Pressable>
+          )}
+        </View>
+      </View> : <View style={styles.footer}>
         <View style={styles.navRow}>
           <Control label="Anterior" icon="chevron-left" disabled={!ready || page <= 1} onPress={() => go(page - 1)} style={styles.navButton} />
           <View style={styles.pagePill}>
@@ -477,14 +587,16 @@ export default function PDFReader() {
           <MaterialIcons name={speaking ? 'stop' : 'play-arrow'} size={24} color={onPrimary} />
           <Text style={styles.listenText}>{speaking ? 'Detener' : 'Escuchar'}</Text>
         </Pressable>
-      </View>
+      </View>}
       <VoiceSettingsSheet visible={voiceSheet} settings={speechSettings}
         onChange={next => updateSpeechSettings(next, false)} onClose={() => setVoiceSheet(false)} />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   </>;
 }
 const baseStyles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#F7F3EB' },
+  keyboard: { flex: 1 },
   header: { padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
   heading: { flex: 1 }, eyebrow: { color: '#876B50', fontSize: 10, fontWeight: '700', letterSpacing: 1.5 },
   title: { color: '#30271F', fontSize: 17, fontWeight: '700', marginTop: 4 },
@@ -539,5 +651,14 @@ const baseStyles = StyleSheet.create({
   buttonText: { color: '#493725', fontSize: 13, fontWeight: '600' },
   primary: { backgroundColor: '#65482F' }, primaryText: { color: '#FFF' }, dimmed: { opacity: 0.4 },
   notice: { backgroundColor: '#FFF0CD', padding: 12 }, noticeText: { color: '#65482F', fontSize: 13, lineHeight: 19 },
+  markHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  markHint: { flex: 1, color: '#4A3625', fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  markPreview: { color: '#7A6754', fontSize: 13, lineHeight: 19, fontStyle: 'italic' },
+  noteInput: {
+    height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#DDD1BF', backgroundColor: '#FFF',
+    paddingHorizontal: 12, color: '#30271F', fontSize: 15,
+  },
+  markActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  markSave: { flex: 1, paddingHorizontal: 12 },
 });
 

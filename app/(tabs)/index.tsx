@@ -3,6 +3,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { AppSettingsSheet } from '@/components/home/app-settings-sheet';
 import { BibleSearch } from '@/components/home/bible-search';
 import { BookmarksSheet } from '@/components/home/bookmarks-sheet';
+import type { PDFMark } from '@/constants/pdf-marks';
 import { ContinueReadingCard } from '@/components/home/continue-reading-card';
 import { OpenBookIcon } from '@/components/home/open-book-icon';
 import { VerseOfDayCard } from '@/components/home/verse-of-day-card';
@@ -160,6 +161,10 @@ export default function HomeScreen() {
       pathname: '/chapter-reader',
       params: { collectionId: bookmark.collectionId, book: bookmark.book, chapter: String(bookmark.chapter), verse: String(bookmark.verse) },
     });
+  };
+  const openPDFMark = (mark: PDFMark) => {
+    setBookmarksOpen(false);
+    router.push({ pathname: '/pdf-reader-v2', params: { bookmarkId: mark.docId, page: String(mark.page), markId: mark.id } });
   };
   const [readings, setReadings] = useState<Awaited<ReturnType<typeof loadLastReadings>>>({ bible: null, latest: null, pdfCount: 0 });
   // Refresh "continue reading" every time the user comes back to this screen.
@@ -592,7 +597,7 @@ export default function HomeScreen() {
       </ScrollView>
 
       <AppSettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <BookmarksSheet visible={bookmarksOpen} onClose={() => setBookmarksOpen(false)} onOpen={openBookmark} />
+      <BookmarksSheet visible={bookmarksOpen} onClose={() => setBookmarksOpen(false)} onOpen={openBookmark} onOpenPDF={openPDFMark} />
 
       <Sheet visible={chapterPanelBook !== null} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setChapterPanelBook(null)}>
         <View style={styles.chapterOverlay}>

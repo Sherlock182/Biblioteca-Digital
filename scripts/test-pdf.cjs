@@ -60,11 +60,20 @@ test('invalid saved library is reported and never overwritten', async () => {
 
 // ---- Viewer (PDF.js mocked) ----
 function viewerHarness({ failDocument = false, brokenPage = 0, pageItems } = {}) {
-  const events = [], canvases = [], loaded = [];
+  const events = [], canvases = [], loaded = [], listeners = {};
   let concurrent = 0, maxConcurrent = 0;
+  const element = () => ({
+    style: {}, children: [], classList: { add() {}, toggle() {} }, getContext: () => ({ fillRect() {} }),
+    append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
+    setAttribute() {}, querySelectorAll: () => [],
+    // The page is drawn at 600×800 CSS px from the top-left corner of the screen.
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 600, height: 800, bottom: 800 }),
+  });
   const container = {
     clientWidth: 360, clientHeight: 600, scrollWidth: 360, scrollHeight: 600, scrollTop: 0, scrollLeft: 0, firstChild: null,
-    addEventListener() {}, replaceChildren(child) { this.firstChild = child; canvases.push(child); },
+    classList: { toggle() {} }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 360, height: 600, bottom: 600 }),
+    addEventListener(type, handler) { listeners[type] = handler; },
+    replaceChildren(child) { this.firstChild = child; canvases.push(child.children?.[0] ?? child); },
   };
   const defaultItems = [
     { str: 'Primera línea', transform: [12, 0, 0, 12, 40, 700], width: 80, hasEOL: true },
@@ -72,7 +81,7 @@ function viewerHarness({ failDocument = false, brokenPage = 0, pageItems } = {})
   ];
   const doc = { numPages: 3, destroy: async () => {}, getPage: async number => ({
     view: [0, 0, 600, 800],
-    getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale }),
+    getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale, scale, transform: [scale, 0, 0, -scale, 0, 800 * scale] }),
     render: () => ({ promise: (async () => {
       concurrent++; maxConcurrent = Math.max(maxConcurrent, concurrent); await delay(2); concurrent--;
       if (number === brokenPage) throw new Error('Operador dañado');
@@ -85,11 +94,12 @@ function viewerHarness({ failDocument = false, brokenPage = 0, pageItems } = {})
     ReactNativeWebView: { postMessage: text => events.push(JSON.parse(text)) },
     document: {
       getElementById: id => id === 'pages' ? container : { textContent: '' },
-      createElement: () => ({ style: {}, getContext: () => ({ fillRect() {} }) }),
+      createElement: element,
     },
     addEventListener() {},
     pdfjsWorker: {},
-    pdfjsLib: { getDocument: options => {
+    pdfjsLib: { Util: { transform: (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
+      a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]] }, getDocument: options => {
       loaded.push(options.data);
       return { promise: failDocument ? Promise.reject({ name: 'InvalidPDFException' }) : Promise.resolve(doc) };
     } },
@@ -98,7 +108,7 @@ function viewerHarness({ failDocument = false, brokenPage = 0, pageItems } = {})
   vm.createContext(context);
   const html = getPDFViewerHTML('', '');
   for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInContext(match[1], context);
-  return { context, events, canvases, loaded, getMax: () => maxConcurrent };
+  return { context, events, canvases, loaded, listeners, getMax: () => maxConcurrent };
 }
 const lastChange = events => events.filter(e => e.type === 'PAGE_CHANGED').at(-1);
 
@@ -118,6 +128,34 @@ test('viewer restores page, coalesces navigation and bounds zoom/canvas memory',
   await context.requestPageText(3, 42);
   assert.equal(events.at(-1).requestId, 42);
   assert.match(events.at(-1).text, /Primera línea\s+Segunda línea/);
+});
+test('marking highlights the words dragged over and draws saved marks on their page', async () => {
+  const { context, events, listeners } = viewerHarness();
+  await context.loadPDF(btoa('%PDF'), 1);
+  context.setMarkMode(true);
+  await delay(5);
+  assert.equal(events.filter(e => e.type === 'MARK_MODE').at(-1).words, 4);
+  const touch = (x, y) => ({ clientX: x, clientY: y });
+  // From "Primera" (first line) down to "Segunda" (second line).
+  listeners.touchstart({ touches: [touch(50, 95)] });
+  listeners.touchmove({ touches: [touch(52, 115)], preventDefault() {} });
+  listeners.touchend({ changedTouches: [touch(52, 115)] });
+  const selection = events.filter(e => e.type === 'MARK_SELECTION').at(-1);
+  assert.equal(selection.text, 'Primera línea Segunda');
+  assert.equal(selection.count, 3);
+  assert.equal(selection.rects.length, 2, 'one box per line');
+  assert(!events.some(e => e.type === 'SWIPE'));
+  // A tap farther on extends the passage to that word.
+  listeners.touchstart({ touches: [touch(110, 115)] });
+  listeners.touchend({ changedTouches: [touch(110, 115)] });
+  assert.equal(events.filter(e => e.type === 'MARK_SELECTION').at(-1).text, 'Primera línea Segunda línea');
+  // Outside marking, tapping a saved highlight reports it.
+  context.setMarkMode(false);
+  context.setMarks([{ id: 'm1', page: 1, rects: selection.rects }]);
+  listeners.touchstart({ touches: [touch(50, 95)] });
+  listeners.touchend({ changedTouches: [touch(50, 95)] });
+  assert.equal(events.at(-1).type, 'MARK_TAPPED');
+  assert.equal(events.at(-1).id, 'm1');
 });
 test('document arrives in base64 chunks and is reassembled byte for byte', async () => {
   const { context, events, loaded } = viewerHarness();

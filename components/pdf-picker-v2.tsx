@@ -2,6 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { seedDefaultPDFs } from '@/constants/default-pdfs';
 import { createPDFBookmark, PDFBookmark } from '@/constants/pdf-books';
 import { PDFLibraryService } from '@/constants/pdf-library-service';
+import { removePDFMarksOf } from '@/constants/pdf-marks';
 import { MAX_PDF_BYTES, PDFStorageService } from '@/constants/pdf-storage-service';
 import { readFileAsBase64Safe } from '@/constants/safe-file-reader';
 import { AppTheme, mergeStyles, useAppSettings } from '@/constants/app-settings';
@@ -120,6 +121,7 @@ export default function PDFLibrary() {
         busyRef.current = true; setBusy(true);
         void (async () => {
           await PDFLibraryService.removeBook(book.id);
+          void removePDFMarksOf(book.id).catch(() => undefined);
           setBooks(current => current.filter(item => item.id !== book.id));
           try { await PDFStorageService.deleteOwnedPDF(book.fileUri); }
           catch { Alert.alert('Documento retirado', 'Se quitó de la biblioteca, pero no se pudo liberar el espacio de su copia local.'); }
