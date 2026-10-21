@@ -10,7 +10,6 @@ const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: undef
 
 /** The sheet itself follows the selected theme, so the change is visible right away. */
 function sheetTheme(theme: AppTheme) {
-  if (theme.id === 'clasico') return { styles: baseStyles, accent: '#65482F', idle: '#B4A38D' };
   const ui = theme.ui;
   return {
     accent: ui.primary, idle: ui.muted,
@@ -95,7 +94,7 @@ export function AppSettingsSheet({ visible, onClose }: { visible: boolean; onClo
             const active = layout.id === settings.verseLayout;
             return <Pressable key={layout.id} accessibilityRole="radio" accessibilityState={{ checked: active }} accessibilityLabel={'Lectura ' + layout.label}
               onPress={() => setVerseLayout(layout.id)} style={({ pressed }) => [styles.choice, active && styles.sizeActive, pressed && styles.pressed]}>
-              <MaterialIcons name={layout.id === 'parrafo' ? 'notes' : 'format-list-numbered'} size={20} color={active ? (theme.id === 'clasico' ? '#FFF' : theme.ui.primaryText) : accent} />
+              <MaterialIcons name={layout.id === 'parrafo' ? 'notes' : 'format-list-numbered'} size={20} color={active ? theme.ui.primaryText : accent} />
               <Text style={[styles.choiceTitle, active && styles.sizeTextActive]}>{layout.label}</Text>
               <Text style={[styles.sizeLabel, active && styles.sizeTextActive]} numberOfLines={1}>{layout.description}</Text>
             </Pressable>;
@@ -150,7 +149,7 @@ const baseStyles = StyleSheet.create({
   },
   themeActive: { borderColor: '#65482F', backgroundColor: '#F3EBDD' },
   pressed: { opacity: 0.8 },
-  swatch: { width: 64, height: 48, borderRadius: 10, padding: 5, flexDirection: 'row', gap: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#0001' },
+  swatch: { width: 64, height: 48, borderRadius: 12, padding: 5, flexDirection: 'row', gap: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#0001' },
   swatchCard: { flex: 1, borderRadius: 6, justifyContent: 'flex-end', padding: 4 },
   swatchAccent: { height: 4, borderRadius: 2, width: '70%' },
   swatchPage: { flex: 1, borderRadius: 6, padding: 4, gap: 3, justifyContent: 'center' },
@@ -173,7 +172,7 @@ const baseStyles = StyleSheet.create({
   sizeLetter: { fontWeight: '800', color: '#4A3625', fontFamily: SERIF },
   sizeLabel: { fontSize: 9, color: '#7C6B58', fontWeight: '600' },
   sizeTextActive: { color: '#FFF' },
-  preview: { flexDirection: 'row', gap: 8, padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#E5DCCF' },
+  preview: { flexDirection: 'row', gap: 8, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E5DCCF' },
   previewNumber: { fontWeight: '700', fontFamily: SERIF },
   previewText: { flex: 1, fontFamily: SERIF },
   note: { fontSize: 12, color: '#7C6B58', lineHeight: 18 },

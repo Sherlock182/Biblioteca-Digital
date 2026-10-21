@@ -30,7 +30,7 @@ export function ContinueReadingCard({ reading, theme, onPress }: { reading: Last
 }
 
 const styles = StyleSheet.create({
-  card: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, borderWidth: 1 },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, borderWidth: 1 },
   pressed: { transform: [{ scale: 0.98 }], opacity: 0.92 },
   icon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   body: { flex: 1, gap: 2 },

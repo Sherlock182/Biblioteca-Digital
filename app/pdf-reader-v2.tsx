@@ -13,7 +13,7 @@ import { readFileAsBase64Safe } from '@/constants/safe-file-reader';
 import { StatusBar } from 'expo-status-bar';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { ActivityIndicator, Alert, AppState, DimensionValue, KeyboardAvoidingView, PermissionsAndroid, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -34,18 +34,21 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 const utteranceLimit = () => Number.isFinite(Speech.maxSpeechInputLength)
   ? Math.min(MAX_UTTERANCE_CHARS, Math.max(32, Speech.maxSpeechInputLength - 32)) : MAX_UTTERANCE_CHARS;
 
-function Button({ title, onPress, disabled = false, primary = false }: {
+function Button({ title, onPress, disabled = false, primary = false, icon }: {
   title: string; onPress: () => void; disabled?: boolean; primary?: boolean;
+  /** Drawn before the title (a back arrow, for instance). */
+  icon?: ComponentProps<typeof MaterialIcons>['name'];
 }) {
   const { styles } = readerTheme(useAppSettings().theme);
+  const textStyle = [styles.buttonText, primary && styles.primaryText];
   return <Pressable accessibilityRole="button" accessibilityLabel={title}
     accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
-    style={({ pressed }) => [styles.button, primary && styles.primary, (disabled || pressed) && styles.dimmed]}>
-    <Text style={[styles.buttonText, primary && styles.primaryText]}>{title}</Text>
+    style={({ pressed }) => [styles.button, icon && styles.buttonWithIcon, primary && styles.primary, (disabled || pressed) && styles.dimmed]}>
+    {icon && <MaterialIcons name={icon} size={18} color={StyleSheet.flatten(textStyle).color as string} />}
+    <Text style={textStyle}>{title}</Text>
   </Pressable>;
 }
 
-const CLASSIC_DOCUMENT_BACKGROUND = '#E9E3D9';
 const readerStylesCache = new Map<ThemeId, { styles: typeof baseStyles; icon: string; spinner: string; onPrimary: string; documentBackground: string }>();
 
 /** Reader chrome colors for the chosen theme (the PDF page itself stays white); cached per theme. */
@@ -53,10 +56,8 @@ function readerTheme(theme: AppTheme) {
   const cached = readerStylesCache.get(theme.id);
   if (cached) return cached;
   const ui = theme.ui;
-  const documentBackground = theme.id === 'clasico' ? CLASSIC_DOCUMENT_BACKGROUND : theme.id === 'noche' ? '#0B0C10' : ui.soft;
-  const value = theme.id === 'clasico'
-    ? { styles: baseStyles, icon: '#4A3625', spinner: '#79583C', onPrimary: '#FFF', documentBackground }
-    : {
+  const documentBackground = theme.id === 'noche' ? '#18191D' : ui.soft;
+  const value = {
       icon: ui.text, spinner: ui.accent, onPrimary: ui.primaryText, documentBackground,
       styles: mergeStyles(baseStyles, {
         screen: { backgroundColor: ui.page }, eyebrow: { color: ui.accent }, title: { color: ui.text },
@@ -498,7 +499,7 @@ export default function PDFReader() {
       {/* The app draws behind the keyboard (edge to edge): lift the footer so the note being typed stays visible. */}
       <KeyboardAvoidingView behavior="padding" style={styles.keyboard}>
       <View style={styles.header}>
-        <Button title="‹ Biblioteca" onPress={back} />
+        <Button title="Biblioteca" icon="arrow-back" onPress={back} />
         <View style={styles.heading}>
           <Text style={styles.eyebrow}>LECTURA PERSONAL</Text>
           <Text style={styles.title} numberOfLines={1}>{book?.displayName || 'Documento PDF'}</Text>
@@ -608,25 +609,25 @@ const baseStyles = StyleSheet.create({
   message: { fontSize: 15, lineHeight: 23, color: '#6C5D4E', textAlign: 'center', marginVertical: 14 },
   footer: {
     paddingHorizontal: 14, paddingTop: 14, paddingBottom: 12, gap: 12, backgroundColor: '#FFFDF9',
-    borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
     shadowColor: '#3B2A1A', shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: -4 }, elevation: 12,
   },
   navRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navButton: { flex: 1 },
   pagePill: {
     flexDirection: 'row', alignItems: 'center', gap: 6, padding: 4, paddingLeft: 4,
-    backgroundColor: '#F3ECE1', borderRadius: 14, borderWidth: 1, borderColor: '#E6DBCB',
+    backgroundColor: '#F3ECE1', borderRadius: 12, borderWidth: 1, borderColor: '#E6DBCB',
   },
   pageInput: {
-    width: 46, height: 38, borderRadius: 10, backgroundColor: '#FFF', textAlign: 'center',
+    width: 46, height: 38, borderRadius: 12, backgroundColor: '#FFF', textAlign: 'center',
     color: '#30271F', fontSize: 16, fontWeight: '700', borderWidth: 1, borderColor: '#DDD1BF', padding: 0,
   },
   pageTotal: { color: '#7A6754', fontSize: 13, fontWeight: '500' },
-  goButton: { height: 38, minWidth: 40, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#65482F', alignItems: 'center', justifyContent: 'center' },
+  goButton: { height: 38, minWidth: 40, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#65482F', alignItems: 'center', justifyContent: 'center' },
   goText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   segment: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3ECE1', borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3ECE1', borderRadius: 12,
     borderWidth: 1, borderColor: '#E6DBCB', padding: 3,
   },
   zoomSegment: { flex: 1 },
@@ -636,9 +637,9 @@ const baseStyles = StyleSheet.create({
   divider: { width: 1, height: 22, backgroundColor: '#DDD0BD' },
   control: {
     minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-    paddingHorizontal: 12, borderRadius: 14, backgroundColor: '#F3ECE1', borderWidth: 1, borderColor: '#E6DBCB',
+    paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#F3ECE1', borderWidth: 1, borderColor: '#E6DBCB',
   },
-  controlFlat: { minHeight: 40, backgroundColor: 'transparent', borderWidth: 0, borderRadius: 11 },
+  controlFlat: { minHeight: 40, backgroundColor: 'transparent', borderWidth: 0, borderRadius: 12 },
   controlPressed: { backgroundColor: '#E8DCCB' },
   controlText: { color: '#4A3625', fontSize: 14, fontWeight: '600' },
   listen: {
@@ -648,6 +649,7 @@ const baseStyles = StyleSheet.create({
   listenActive: { backgroundColor: '#8E5447', shadowColor: '#8E5447' },
   listenText: { color: '#FFF', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
   button: { minHeight: 44, minWidth: 44, paddingHorizontal: 11, justifyContent: 'center', alignItems: 'center', backgroundColor: '#EBE3D6', borderRadius: 12 },
+  buttonWithIcon: { flexDirection: 'row', gap: 4 },
   buttonText: { color: '#493725', fontSize: 13, fontWeight: '600' },
   primary: { backgroundColor: '#65482F' }, primaryText: { color: '#FFF' }, dimmed: { opacity: 0.4 },
   notice: { backgroundColor: '#FFF0CD', padding: 12 }, noticeText: { color: '#65482F', fontSize: 13, lineHeight: 19 },

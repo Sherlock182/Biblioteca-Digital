@@ -3,9 +3,11 @@ import { seedDefaultPDFs } from './default-pdfs';
 import { PDFLibraryService } from './pdf-library-service';
 
 // Collections on the shelf; a saved reading of a removed collection (the old TaNakh) is ignored.
-const SHELF_COLLECTIONS = new Set(['rv1960', 'catolica', 'nbv']);
+const SHELF_COLLECTIONS = new Set(['rv1960', 'catolica', 'nbv', 'lbla', 'rvc', 'nvi']);
 
 const LAST_BIBLE_KEY = '@last_bible_reading_v1';
+// Where the reader left off in each Bible, so every one on the home screen resumes on its own.
+const BIBLE_BY_COLLECTION_KEY = '@last_bible_reading_by_collection_v1';
 
 export type BibleReading = {
   kind: 'bible'; collectionId: string; book: string; chapter: number; tanakhLanguage: 'es' | 'he'; at: number;
@@ -26,17 +28,36 @@ export const displayBookName = (book: string) => ACCENTED[book] ?? book;
 
 export async function saveBibleReading(reading: Omit<BibleReading, 'kind' | 'at'>): Promise<void> {
   const value: BibleReading = { kind: 'bible', ...reading, at: Date.now() };
-  await AsyncStorage.setItem(LAST_BIBLE_KEY, JSON.stringify(value)).catch(() => undefined);
+  const byCollection = await loadBibleReadingsByCollection();
+  byCollection[value.collectionId] = value;
+  await AsyncStorage.multiSet([
+    [LAST_BIBLE_KEY, JSON.stringify(value)],
+    [BIBLE_BY_COLLECTION_KEY, JSON.stringify(byCollection)],
+  ]).catch(() => undefined);
+}
+
+function parseBibleReading(value: unknown): BibleReading | null {
+  const raw = value as Partial<BibleReading> | null;
+  if (!raw || typeof raw.collectionId !== 'string' || !SHELF_COLLECTIONS.has(raw.collectionId) || typeof raw.book !== 'string' ||
+    !Number.isInteger(raw.chapter) || raw.chapter < 1) return null;
+  return { kind: 'bible', collectionId: raw.collectionId, book: raw.book, chapter: raw.chapter as number,
+    tanakhLanguage: raw.tanakhLanguage === 'he' ? 'he' : 'es', at: Number(raw.at) || 0 };
 }
 
 async function loadBibleReading(): Promise<BibleReading | null> {
+  try { return parseBibleReading(JSON.parse((await AsyncStorage.getItem(LAST_BIBLE_KEY)) || 'null')); } catch { return null; }
+}
+
+async function loadBibleReadingsByCollection(): Promise<Record<string, BibleReading>> {
+  const result: Record<string, BibleReading> = {};
   try {
-    const raw = JSON.parse((await AsyncStorage.getItem(LAST_BIBLE_KEY)) || 'null');
-    if (!raw || typeof raw.collectionId !== 'string' || !SHELF_COLLECTIONS.has(raw.collectionId) || typeof raw.book !== 'string' ||
-      !Number.isInteger(raw.chapter) || raw.chapter < 1) return null;
-    return { kind: 'bible', collectionId: raw.collectionId, book: raw.book, chapter: raw.chapter,
-      tanakhLanguage: raw.tanakhLanguage === 'he' ? 'he' : 'es', at: Number(raw.at) || 0 };
-  } catch { return null; }
+    const raw = JSON.parse((await AsyncStorage.getItem(BIBLE_BY_COLLECTION_KEY)) || '{}');
+    for (const value of Object.values(raw && typeof raw === 'object' ? raw : {})) {
+      const reading = parseBibleReading(value);
+      if (reading) result[reading.collectionId] = reading;
+    }
+  } catch { /* unreadable: start empty */ }
+  return result;
 }
 
 async function loadPdfReading(): Promise<PdfReading | null> {
@@ -51,14 +72,25 @@ async function loadPdfReading(): Promise<PdfReading | null> {
   } catch { return null; }
 }
 
-/** The most recent reading across the Bibles and the PDF library, plus the PDF count for the shelf. */
-export async function loadLastReadings(): Promise<{ bible: BibleReading | null; latest: LastReading | null; pdfCount: number }> {
+export type LastReadings = {
+  bible: BibleReading | null; latest: LastReading | null; pdfCount: number;
+  /** The PDF read most recently, whatever was read after it. */
+  pdf: PdfReading | null;
+  /** Where each Bible was left, by collection id. */
+  byCollection: Record<string, BibleReading>;
+};
+
+/** The most recent reading across the Bibles and the PDF library, each Bible's own, and the PDF count. */
+export async function loadLastReadings(): Promise<LastReadings> {
   await seedDefaultPDFs();
-  const [bible, pdf, pdfCount] = await Promise.all([
+  const [bible, byCollection, pdf, pdfCount] = await Promise.all([
     loadBibleReading(),
+    loadBibleReadingsByCollection(),
     loadPdfReading(),
     PDFLibraryService.loadLibrary().then(library => library.books.length).catch(() => 0),
   ]);
+  // Readings saved before the per-Bible list existed still count for their Bible.
+  if (bible && !byCollection[bible.collectionId]) byCollection[bible.collectionId] = bible;
   const latest = [bible, pdf].filter((item): item is LastReading => !!item).sort((a, b) => b.at - a.at)[0] ?? null;
-  return { bible, latest, pdfCount };
+  return { bible, latest, pdfCount, byCollection, pdf };
 }

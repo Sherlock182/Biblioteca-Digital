@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { BookmarksSheet } from '@/components/home/bookmarks-sheet';
 import { seedDefaultPDFs } from '@/constants/default-pdfs';
 import { createPDFBookmark, PDFBookmark } from '@/constants/pdf-books';
 import { PDFLibraryService } from '@/constants/pdf-library-service';
@@ -16,13 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 class RejectedPDFError extends Error {}
 
-const CLASSIC_ICONS = {
-  nav: '#493725', muted: '#7C6B58', accent: '#65482F', danger: '#8E5447', empty: '#87633D', spinner: '#79583C', onPrimary: '#FFF', chevron: '#8B755C',
-};
-
-/** Library colors for the chosen theme; the classic theme is the original design. */
+/** Library colors for the chosen theme. */
 function libraryTheme(theme: AppTheme) {
-  if (theme.id === 'clasico') return { styles: baseStyles, icons: CLASSIC_ICONS };
   const ui = theme.ui;
   return {
     icons: {
@@ -57,6 +53,7 @@ export default function PDFLibrary() {
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
+  const [marksOpen, setMarksOpen] = useState(false);
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
   // Only the first load shows the spinner; coming back from the reader refreshes the list in place.
   const load = useCallback(async () => {
@@ -140,6 +137,9 @@ export default function PDFLibrary() {
         </Pressable>
         <Text style={styles.brand}>BIBLIOTECA DIGITAL</Text>
         <View style={styles.badge}><Text style={styles.badgeText}>PDF</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Marcadores de documentos PDF" onPress={() => setMarksOpen(true)} style={styles.iconButton}>
+          <MaterialIcons name="bookmarks" size={22} color={icons.nav} />
+        </Pressable>
       </View>
       <View style={styles.intro}>
         <Text style={styles.title}>Tu espacio de lectura</Text>
@@ -192,6 +192,10 @@ export default function PDFLibrary() {
           }} />}
       {analyzer.element}
     </SafeAreaView>
+    <BookmarksSheet visible={marksOpen} only="pdf" onClose={() => setMarksOpen(false)} onOpenPDF={mark => {
+      setMarksOpen(false);
+      router.push({ pathname: '/pdf-reader-v2', params: { bookmarkId: mark.docId, page: String(mark.page), markId: mark.id } });
+    }} />
   </>;
 }
 const baseStyles = StyleSheet.create({
@@ -204,16 +208,16 @@ const baseStyles = StyleSheet.create({
   intro: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 18, gap: 10 },
   title: { fontSize: 29, fontWeight: '700', color: '#30271F', letterSpacing: -0.8 },
   subtitle: { color: '#6C5D4E', fontSize: 15, lineHeight: 22 },
-  addButton: { minHeight: 48, borderRadius: 14, backgroundColor: '#65482F', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, padding: 12, marginTop: 8 },
+  addButton: { minHeight: 48, borderRadius: 12, backgroundColor: '#65482F', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, padding: 12, marginTop: 8 },
   addText: { color: '#FFF', fontSize: 15, fontWeight: '700' }, dimmed: { opacity: 0.45 },
   hint: { color: '#7D6B56', fontSize: 11, textAlign: 'center', lineHeight: 16 },
-  search: { marginHorizontal: 24, backgroundColor: '#FFFDF9', borderWidth: 1, borderColor: '#DED3C3', borderRadius: 14, flexDirection: 'row', alignItems: 'center', paddingLeft: 14 },
+  search: { marginHorizontal: 24, backgroundColor: '#FFFDF9', borderWidth: 1, borderColor: '#DED3C3', borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingLeft: 14 },
   searchInput: { flex: 1, minHeight: 48, paddingHorizontal: 8, color: '#30271F', fontSize: 14 },
   listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingTop: 12 },
   count: { color: '#7D6B56', fontSize: 12 }, sortButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
   sortText: { color: '#65482F', fontSize: 12, fontWeight: '600' },
   list: { paddingHorizontal: 20, paddingBottom: 30, flexGrow: 1 },
-  card: { backgroundColor: '#FFFDF9', borderRadius: 18, borderWidth: 1, borderColor: '#E5DCCF', marginBottom: 12, flexDirection: 'row', alignItems: 'center' },
+  card: { backgroundColor: '#FFFDF9', borderRadius: 16, borderWidth: 1, borderColor: '#E5DCCF', marginBottom: 12, flexDirection: 'row', alignItems: 'center' },
   bookMain: { flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   cover: { width: 52, height: 72, borderRadius: 8, backgroundColor: '#8C6D4B', alignItems: 'center', justifyContent: 'center', gap: 4, borderLeftWidth: 4, borderLeftColor: '#65482F' },
   coverText: { color: '#FFF8EE', fontSize: 9, letterSpacing: 1.5, fontWeight: '700' },
@@ -222,7 +226,7 @@ const baseStyles = StyleSheet.create({
   fill: { height: 3, backgroundColor: '#A6814D', borderRadius: 3 },
   deleteButton: { minWidth: 44, minHeight: 60, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
-  emptyIcon: { backgroundColor: '#ECE2D2', padding: 24, borderRadius: 28 },
+  emptyIcon: { backgroundColor: '#ECE2D2', padding: 24, borderRadius: 24 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#4B3928', textAlign: 'center' },
   emptyDescription: { fontSize: 14, color: '#7C6B58', lineHeight: 22, textAlign: 'center', maxWidth: 280 },
 });

@@ -443,17 +443,21 @@ test('Nueva Biblia Viva is complete and different from the RV1960', () => {
   assert.deepEqual(Object.keys(nbv).sort(), [...books].sort());
   for (const book of books) assert.equal(nbv[book].length, chapterCounts[book], book);
   assert.equal(countVerses(nbv), 29102);
-  // "»" opens a new paragraph of Jesus' words, which began in 3:10 (Spanish typography, as in the source).
-  assert.equal(nbv.Juan[2][15], '»Dios amó tanto al mundo, que dio a su único Hijo, para que todo el que cree en él no se pierda, sino tenga vida eterna.');
+  // The » that opens a new paragraph of a speech is dropped (scripts/fix-bible-text.js): alone in a verse it reads as a stray mark.
+  assert.equal(nbv.Juan[2][15], 'Dios amó tanto al mundo, que dio a su único Hijo, para que todo el que cree en él no se pierda, sino tenga vida eterna.');
   assert.equal(nbv.Salmos[22][0], 'El Señor es mi pastor, nada me falta.');
   assert.match(nbv.Numeros[1][2], /^La ubicación de las tribus:\nJudá: Naasón \(hijo de Aminadab\), Al este del santuario, 74\.600\nIsacar/, 'one line per table row');
   // The source's «» quotes are kept (removing them glued sentences together: "rumores.No").
-  assert.equal(nbv.Exodo[22][0], '»No acepten falsos rumores. »No cooperen con el malvado apoyando su testimonio, cuando sepan que es falso.');
-  assert.match(nbv.Exodo[16][14], /«El Señor-Nisí»/);
+  assert.equal(nbv.Exodo[22][0], 'No acepten falsos rumores. No cooperen con el malvado apoyando su testimonio, cuando sepan que es falso.');
+  assert.match(nbv.Exodo[16][14], /El Señor-Nisí/);
+  // Plain like the RV1960: no quotation marks, brackets or dashes (scripts/fix-bible-text.js).
+  assert(!/[«»“”‘’\[\]—―]/.test(Object.values(nbv).flat(2).filter(Boolean).join('')), 'no quotes, brackets or dashes');
   const text = Object.values(nbv).flat(2).filter(Boolean).join('\n');
   assert(!/[,;:.!?][A-Za-zÁÉÍÓÚÑáéíóúñ¿¡«]/.test(text), 'no words glued after punctuation');
   assert(!/ [,.;:!?)”]|[(¿¡«“] /.test(text), 'no stray spaces around punctuation');
-  assert(!/\ba el Señor\b/.test(text), '"al Señor", not "a el Señor"');
+  assert(!/(?<!\p{L})a el Señor\b/u.test(text), '"al Señor", not "a el Señor"');
+  assert(!/\p{L}íal\b/u.test(text), '"día el Señor", not "díal Señor"');
+  assert(!/(^|\s)[»”’―]/m.test(text), 'no paragraph-continuation marks or ― dashes');
 });
 test('RV1960 headings stand above verses of the app text', () => {
   const titles = readBible('rv1960-titulos.json');
@@ -498,7 +502,7 @@ test('Catholic Bible is the Platense (Straubinger) with the full Catholic canon'
   assert(!/\[$/.test(bible.Marcos[8][42]), 'no dangling "[" at the end of Mark 9:43');
   const allText = Object.values(bible).flat(2).filter(Boolean).join('\n');
   assert(!/[{}]/.test(allText), 'no stray braces (1 Chr 29:19, Song 8:6)');
-  assert.equal(bible.Lucas[0][27], 'Y entrado donde ella estaba, le dijo: “Salve, llena de gracia; el Señor es contigo”.');
+  assert.equal(bible.Lucas[0][27], 'Y entrado donde ella estaba, le dijo: Salve, llena de gracia; el Señor es contigo.');
   assert.equal(bible.Salmos[21][0], 'Salmo de David. Yahvé es mi pastor, nada me faltará.', 'Vulgate psalm numbering');
   assert(countVerses(bible) > 35000);
 });
@@ -515,7 +519,7 @@ test('saved app settings are validated', () => {
   assert.deepEqual({ ...exports.sanitizeAppSettings({ readerFont: 'comic', verseLayout: 'tabla' }) },
     { themeId: 'clasico', textScale: 1, readerFont: 'clasica', verseLayout: 'versiculos' });
   assert.equal(exports.THEMES.length, 5);
-  assert.equal(exports.THEMES[0].reader.page, '#F6EFD2', 'the classic theme keeps the original reader colors');
+  assert.equal(exports.THEMES[0].reader.page, '#EEF5FA', 'the classic theme is sky blue, inside the Bible too');
 });
 
 const voices = load('constants/speech-voices.ts');

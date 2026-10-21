@@ -3,6 +3,7 @@ import { AppTheme } from '@/constants/app-settings';
 import { expandForSpeech } from '@/constants/pdf-speech-text';
 import { loadSpeechSettings, speakWithFallback } from '@/constants/speech-engine';
 import { DailyVerse, getVerseOfDay } from '@/constants/verse-of-day';
+import { Skeleton } from '@/components/ui/skeleton';
 import * as Sharing from 'expo-sharing';
 import * as Speech from 'expo-speech';
 import { useFocusEffect } from 'expo-router';
@@ -65,13 +66,15 @@ export function VerseOfDayCard({ theme }: { theme: AppTheme }) {
     } finally { setSharing(false); }
   };
 
-  return <View style={[styles.card, { backgroundColor: colors.panel, borderColor: colors.panelBorder }]}>
+  return <View style={[styles.card, { backgroundColor: colors.feature ?? colors.panel, borderColor: colors.panelBorder }]}>
     <View style={styles.header}>
       <MaterialIcons name="wb-sunny" size={16} color={colors.accent} />
       <Text style={[styles.kicker, { color: colors.accent }]}>VERSÍCULO DEL DÍA</Text>
       <Text style={[styles.date, { color: colors.muted }]} numberOfLines={1}>{today()}</Text>
     </View>
-    {verse === undefined ? <ActivityIndicator color={colors.accent} style={styles.loading} />
+    {verse === undefined ? <View style={styles.loading}>
+      <Skeleton color={colors.panelBorder} blocks={[{ width: '100%', height: 14 }, { width: '92%', height: 14 }, { width: '60%', height: 14 }, { width: '35%', height: 12 }]} />
+    </View>
       : verse === null ? <Text style={[styles.text, { color: colors.panelText }]}>No se pudo cargar el versículo de hoy.</Text>
       : <>
         <Text style={[styles.text, { color: colors.panelText }]}>“{verse.text}”</Text>
@@ -106,11 +109,11 @@ export function VerseOfDayCard({ theme }: { theme: AppTheme }) {
 }
 
 const styles = StyleSheet.create({
-  card: { padding: 16, borderRadius: 18, borderWidth: 1, gap: 10 },
+  card: { padding: 16, borderRadius: 16, borderWidth: 1, gap: 10 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   kicker: { fontSize: 11, fontWeight: '800', letterSpacing: 1.3 },
   date: { flex: 1, textAlign: 'right', fontSize: 11 },
-  loading: { paddingVertical: 18 },
+  loading: { paddingVertical: 6 },
   text: { fontSize: 17, lineHeight: 26, fontStyle: 'italic', fontFamily: SERIF },
   reference: { fontSize: 14, fontWeight: '700', textAlign: 'right' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 2 },

@@ -1,3 +1,4 @@
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Sheet } from '@/components/ui/sheet';
 import { IOS_VOICE_STEPS, loadSpanishVoices, openVoiceInstaller, speakUtterance } from '@/constants/speech-engine';
@@ -10,11 +11,8 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch,
 
 const SAMPLE = 'Hola. Así sonará la lectura de tus documentos.';
 
-/** Sheet colors for the chosen theme; the classic theme is the original design. */
+/** Sheet colors for the chosen theme. */
 function sheetTheme(theme: AppTheme) {
-  if (theme.id === 'clasico') {
-    return { styles: baseStyles, spinner: '#79583C', accent: '#65482F', track: { true: '#A6814D', false: '#DDD1BF' }, thumb: '#FFF' };
-  }
   const ui = theme.ui;
   return {
     spinner: ui.accent, accent: ui.primary, track: { true: ui.accent, false: ui.border }, thumb: ui.card,
@@ -98,7 +96,7 @@ export function VoiceSettingsSheet({ visible, settings, onChange, onClose }: {
     <View style={[styles.sheet, { paddingBottom: 28 + insets.bottom }]}>
       <View style={styles.header}>
         <Text style={styles.title}>Ajustes de voz</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Cerrar" onPress={close} style={styles.close}><Text style={styles.closeText}>✕</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cerrar" onPress={close} style={styles.close}><MaterialIcons name="close" size={22} color={StyleSheet.flatten(styles.closeText).color as string} /></Pressable>
       </View>
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
       <View style={styles.switchRow}>
@@ -129,7 +127,7 @@ export function VoiceSettingsSheet({ visible, settings, onChange, onClose }: {
                 </View>
               </Pressable>
               <Pressable accessibilityRole="button" accessibilityLabel={'Probar ' + voice.label} onPress={() => void preview(voice.identifier)} style={styles.play}>
-                {previewing === voice.identifier ? <ActivityIndicator size="small" color={accent} /> : <Text style={styles.playText}>▶</Text>}
+                {previewing === voice.identifier ? <ActivityIndicator size="small" color={accent} /> : <MaterialIcons name="play-arrow" size={24} color={StyleSheet.flatten(styles.playText).color as string} />}
               </Pressable>
             </View>;
           })}
@@ -157,7 +155,7 @@ export function VoiceSettingsSheet({ visible, settings, onChange, onClose }: {
 
 const baseStyles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: '#0006' },
-  sheet: { backgroundColor: '#F7F3EB', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, paddingBottom: 28, gap: 10, maxHeight: '85%' },
+  sheet: { backgroundColor: '#F7F3EB', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, paddingBottom: 28, gap: 10, maxHeight: '85%' },
   header: { flexDirection: 'row', alignItems: 'center' },
   title: { flex: 1, fontSize: 19, fontWeight: '700', color: '#30271F' },
   close: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
@@ -166,7 +164,7 @@ const baseStyles = StyleSheet.create({
   loading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
   body: { flexGrow: 0, flexShrink: 1 }, bodyContent: { gap: 10, paddingBottom: 8 }, listContent: { gap: 8 },
   muted: { color: '#6C5D4E', fontSize: 13, lineHeight: 19 },
-  voice: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFDF9', borderRadius: 14, borderWidth: 1, borderColor: '#E5DCCF' },
+  voice: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFDF9', borderRadius: 12, borderWidth: 1, borderColor: '#E5DCCF' },
   voiceActive: { borderColor: '#65482F', backgroundColor: '#F3EBDD' },
   voiceMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, minHeight: 52 },
   radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#A08A70' },
@@ -181,9 +179,9 @@ const baseStyles = StyleSheet.create({
   stepSign: { fontSize: 20, color: '#493725' },
   stepValue: { minWidth: 110, textAlign: 'center', color: '#493725', fontSize: 14, fontWeight: '600' },
   dimmed: { opacity: 0.4 },
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#FFFDF9', borderRadius: 14, borderWidth: 1, borderColor: '#E5DCCF' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#FFFDF9', borderRadius: 12, borderWidth: 1, borderColor: '#E5DCCF' },
   switchText: { flex: 1, gap: 2 },
-  banner: { backgroundColor: '#FFF0CD', borderRadius: 14, padding: 12, gap: 10, marginTop: 4 },
+  banner: { backgroundColor: '#FFF0CD', borderRadius: 12, padding: 12, gap: 10, marginTop: 4 },
   bannerText: { color: '#65482F', fontSize: 13, lineHeight: 19 },
   bannerButton: { backgroundColor: '#65482F', borderRadius: 12, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   bannerButtonText: { color: '#FFF', fontWeight: '700' },

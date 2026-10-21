@@ -1,13 +1,14 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Sheet } from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Bookmark, loadAllBookmarks, withVerseText } from '@/constants/bookmarks';
 import { useAppSettings } from '@/constants/app-settings';
 import { loadPDFMarks, PDFMark, removePDFMark } from '@/constants/pdf-marks';
 import { PDFLibraryService } from '@/constants/pdf-library-service';
 import { displayBookName } from '@/constants/reading-history';
-import { SACRED_BOOKS, type SacredBook } from '@/constants/scripture';
+import { SACRED_BOOKS, type SacredBook, verseReference } from '@/constants/scripture';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: undefined });
@@ -35,17 +36,21 @@ async function loadPDFMarkGroups(): Promise<PDFMarkGroup[]> {
  * Quick access to the marked verses: first one option per Bible on the shelf (and one for the PDF
  * documents), then that Bible's bookmarks grouped by book. Tapping a bookmark hands it to `onOpen`
  * (or `onOpenPDF` for a passage marked in a PDF), which opens the reader there.
+ * With `only`, the sheet shows just that Bible's bookmarks (or just the PDF marks), with no list to go back to.
  */
-export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
-  visible: boolean; onClose: () => void; onOpen: (bookmark: Bookmark) => void; onOpenPDF: (mark: PDFMark) => void;
+export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF, only }: {
+  visible: boolean; onClose: () => void; onOpen?: (bookmark: Bookmark) => void; onOpenPDF?: (mark: PDFMark) => void;
+  only?: SacredBook | 'pdf' | null;
 }) {
   const { theme } = useAppSettings();
   const ui = theme.ui;
   const insets = useSafeAreaInsets();
   const [all, setAll] = useState<Record<string, Bookmark[]> | null>(null);
-  const [collection, setCollection] = useState<SacredBook | null>(null);
+  const [chosen, setChosen] = useState<SacredBook | null>(null);
+  const [pdfChosen, setPdfChosen] = useState(false);
+  const collection = only ? (only === 'pdf' ? null : only) : chosen;
+  const pdfOpen = only === 'pdf' || (!only && pdfChosen);
   const [pdfGroups, setPdfGroups] = useState<PDFMarkGroup[] | null>(null);
-  const [pdfOpen, setPdfOpen] = useState(false);
   const pdfCount = pdfGroups?.reduce((sum, group) => sum + group.items.length, 0) ?? 0;
   // Verse texts, tagged with the list they belong to so a stale result is never shown.
   const [texts, setTexts] = useState<{ of: Bookmark[]; items: Bookmark[] } | null>(null);
@@ -80,10 +85,10 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
   }, [detailed, list]);
 
   // The sheet always reopens on the three Bibles.
-  const close = () => { setCollection(null); setPdfOpen(false); onClose(); };
+  const close = () => { setChosen(null); setPdfChosen(false); onClose(); };
   const goBack = () => {
-    if (!collection && !pdfOpen) { close(); return; }
-    setCollection(null); setPdfOpen(false);
+    if (only || (!collection && !pdfOpen)) { close(); return; }
+    setChosen(null); setPdfChosen(false);
   };
   const askRemove = (mark: PDFMark) => Alert.alert('Quitar marcador', '¿Quitar este marcador de la página ' + mark.page + '?', [
     { text: 'Cancelar', style: 'cancel' },
@@ -97,7 +102,7 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
     <Pressable style={styles.backdrop} accessibilityLabel="Cerrar marcadores" onPress={close} />
     <View style={[styles.sheet, { backgroundColor: ui.page }]}>
       <View style={styles.header}>
-        {collection || pdfOpen ? (
+        {!only && (collection || pdfOpen) ? (
           <Pressable accessibilityRole="button" accessibilityLabel="Volver" onPress={goBack} style={styles.iconButton}>
             <MaterialIcons name="arrow-back" size={22} color={ui.primary} />
           </Pressable>
@@ -115,7 +120,7 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
 
       <ScrollView style={styles.scroll} contentContainerStyle={[styles.body, { paddingBottom: 34 + insets.bottom }]}>
         {pdfOpen ? (
-          !pdfGroups ? <ActivityIndicator style={styles.loading} color={ui.primary} /> : pdfGroups.length === 0 ? (
+          !pdfGroups ? <View style={styles.loading}><Skeleton color={ui.soft} blocks={[{ width: '100%', height: 64, radius: 16 }, { width: '100%', height: 64, radius: 16 }, { width: '100%', height: 64, radius: 16 }]} /></View> : pdfGroups.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: ui.card, borderColor: ui.border }]}>
               <MaterialIcons name="bookmark-border" size={36} color={ui.muted} />
               <Text style={[styles.emptyTitle, { color: ui.text }]}>Aún no hay marcadores</Text>
@@ -129,7 +134,7 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
               {group.items.map(item => (
                 <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={'Abrir ' + group.name + ', página ' + item.page}
                   accessibilityHint="Mantén presionado para quitarlo"
-                  onPress={() => { setPdfOpen(false); onOpenPDF(item); }} onLongPress={() => askRemove(item)}
+                  onPress={() => { setPdfChosen(false); onOpenPDF?.(item); }} onLongPress={() => askRemove(item)}
                   style={({ pressed }) => [styles.mark, { backgroundColor: ui.card, borderColor: ui.border }, pressed && styles.pressed]}>
                   <View style={[styles.markRibbon, { backgroundColor: ui.accent }]} />
                   <View style={styles.markText}>
@@ -142,11 +147,11 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
               ))}
             </View>
           ))
-        ) : !all ? <ActivityIndicator style={styles.loading} color={ui.primary} /> : !collection ? <>
+        ) : !all ? <View style={styles.loading}><Skeleton color={ui.soft} blocks={[{ width: '100%', height: 64, radius: 16 }, { width: '100%', height: 64, radius: 16 }, { width: '100%', height: 64, radius: 16 }]} /></View> : !collection ? <>
           {SACRED_BOOKS.map(item => {
             const count = all[item.id]?.length ?? 0;
             return <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={'Marcadores de la ' + item.title}
-              onPress={() => setCollection(item)}
+              onPress={() => setChosen(item)}
               style={({ pressed }) => [styles.option, { backgroundColor: ui.card, borderColor: ui.border }, pressed && styles.pressed]}>
               <View style={[styles.optionBook, { backgroundColor: item.colors.cover, borderLeftColor: item.colors.spine }]}>
                 <MaterialIcons name="bookmark" size={20} color={item.colors.text} />
@@ -158,7 +163,7 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
               <MaterialIcons name="chevron-right" size={22} color={ui.muted} />
             </Pressable>;
           })}
-          <Pressable accessibilityRole="button" accessibilityLabel="Marcadores de documentos PDF" onPress={() => setPdfOpen(true)}
+          <Pressable accessibilityRole="button" accessibilityLabel="Marcadores de documentos PDF" onPress={() => setPdfChosen(true)}
             style={({ pressed }) => [styles.option, { backgroundColor: ui.card, borderColor: ui.border }, pressed && styles.pressed]}>
             <View style={[styles.optionBook, { backgroundColor: ui.soft, borderLeftColor: ui.accent }]}>
               <MaterialIcons name="picture-as-pdf" size={20} color={ui.accent} />
@@ -182,12 +187,12 @@ export function BookmarksSheet({ visible, onClose, onOpen, onOpenPDF }: {
             <Text style={[styles.groupTitle, { color: ui.accent }]}>{displayBookName(group.book).toUpperCase()}</Text>
             {group.items.map(item => (
               <Pressable key={item.chapter + ':' + item.verse} accessibilityRole="button"
-                accessibilityLabel={'Abrir ' + displayBookName(item.book) + ' ' + item.chapter + ':' + item.verse}
-                onPress={() => { setCollection(null); onOpen(item); }}
+                accessibilityLabel={'Abrir ' + verseReference(item.collectionId, item.book, item.chapter, item.verse)}
+                onPress={() => { setChosen(null); onOpen?.(item); }}
                 style={({ pressed }) => [styles.mark, { backgroundColor: ui.card, borderColor: ui.border }, pressed && styles.pressed]}>
                 <View style={[styles.markRibbon, { backgroundColor: collection.colors.cover }]} />
                 <View style={styles.markText}>
-                  <Text style={[styles.markRef, { color: ui.text }]}>{displayBookName(item.book)} {item.chapter}:{item.verse}</Text>
+                  <Text style={[styles.markRef, { color: ui.text }]}>{verseReference(item.collectionId, item.book, item.chapter, item.verse)}</Text>
                   {item.text ? <Text style={[styles.markVerse, { color: ui.muted }]} numberOfLines={2}>{item.text}</Text>
                     : !detailed ? <View style={[styles.markPlaceholder, { backgroundColor: ui.soft }]} /> : null}
                 </View>
@@ -215,7 +220,7 @@ const styles = StyleSheet.create({
   iconButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   scroll: { flexShrink: 1 },
   body: { padding: 18, paddingTop: 10, gap: 10 },
-  loading: { marginVertical: 30 },
+  loading: { marginTop: 4 },
   pressed: { opacity: 0.8 },
   option: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 16, borderWidth: 1.5 },
   optionBook: { width: 40, height: 50, borderRadius: 6, borderLeftWidth: 6, alignItems: 'center', justifyContent: 'center' },

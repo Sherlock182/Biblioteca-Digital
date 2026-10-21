@@ -11,6 +11,8 @@ export type AppTheme = {
   home: {
     page: string; card: string; title: string; text: string; muted: string; accent: string;
     panel: string; panelBorder: string; panelText: string; tile: string; tileBorder: string; tileText: string;
+    /** Background of the featured Bible's box and the verse of the day, when they should differ from `panel`. */
+    feature?: string;
     statusBar: 'light' | 'dark';
   };
   /** Library lists, PDF screens and settings sheets. */
@@ -28,68 +30,68 @@ export type AppTheme = {
 
 export const THEMES: AppTheme[] = [
   {
-    id: 'clasico', name: 'Clásico', description: 'El diseño original: azul noche y madera.',
+    id: 'clasico', name: 'Clásico', description: 'Azul cielo con detalles dorados.',
     home: {
-      page: '#F4EEE1', card: '#1A2A3A', title: '#D9C19A', text: '#D9E6F2', muted: '#9FB3C6', accent: '#D9C19A',
-      panel: 'rgba(255,255,255,0.06)', panelBorder: 'rgba(217,193,154,0.28)', panelText: '#F2E6D0',
-      tile: 'rgba(26,18,11,0.44)', tileBorder: 'rgba(238,223,196,0.26)', tileText: '#F5E8D2', statusBar: 'dark',
+      page: '#185F91', card: '#185F91', title: '#FFD98A', text: '#E6F3FC', muted: '#BFDDF2', accent: '#FFD98A',
+      panel: 'rgba(255,255,255,0.10)', panelBorder: 'rgba(255,217,138,0.32)', panelText: '#F7F4EA', feature: '#124A72',
+      tile: 'rgba(26,18,11,0.44)', tileBorder: 'rgba(238,223,196,0.26)', tileText: '#F5E8D2', statusBar: 'light',
     },
-    ui: { page: '#F7F3EB', card: '#FFFDF9', text: '#30271F', muted: '#7C6B58', border: '#E5DCCF', soft: '#EBE3D6', primary: '#65482F', primaryText: '#FFFFFF', accent: '#A6814D', danger: '#8E5447', notice: '#FFF0CD', noticeText: '#65482F', statusBar: 'dark' },
+    ui: { page: '#E6F0F7', card: '#D5E5F1', text: '#1B2B3A', muted: '#4A5E70', border: '#A9C5DB', soft: '#CCDFEE', primary: '#185F91', primaryText: '#FFFFFF', accent: '#7E5A1C', danger: '#9A4F3F', notice: '#FBF0D6', noticeText: '#5C4318', statusBar: 'dark' },
     reader: {
-      page: '#F6EFD2', header: '#2F1E12', headerBorder: '#6A4325', heading: '#3E2D1A', text: '#2F2418', number: '#8A6F4D',
-      highlight: '#FFF9C4', selected: '#EADBBC', statusBar: 'dark',
+      page: '#EEF5FA', header: '#185F91', headerBorder: '#E0B85C', heading: '#14496F', text: '#1E2A36', number: '#7E5A1C',
+      highlight: '#FFF3B8', selected: '#D3E4F2', statusBar: 'dark',
     },
   },
   {
-    id: 'noche', name: 'Noche', description: 'Oscuro y cómodo para leer de noche.',
+    id: 'noche', name: 'Noche', description: 'Grises carbón en varios tonos, con dorado.',
     home: {
-      page: '#0E1014', card: '#171A21', title: '#E3C98F', text: '#C9CED8', muted: '#8B93A1', accent: '#E3C98F',
-      panel: 'rgba(255,255,255,0.05)', panelBorder: 'rgba(227,201,143,0.2)', panelText: '#EDE3CF',
-      tile: 'rgba(255,255,255,0.04)', tileBorder: 'rgba(227,201,143,0.18)', tileText: '#EDE3CF', statusBar: 'light',
+      page: '#2A2D34', card: '#2A2D34', title: '#E3C98F', text: '#D6DAE2', muted: '#A3AAB6', accent: '#E3C98F',
+      panel: 'rgba(255,255,255,0.07)', panelBorder: 'rgba(227,201,143,0.24)', panelText: '#EFE7D6', feature: '#1D1F24',
+      tile: 'rgba(255,255,255,0.05)', tileBorder: 'rgba(227,201,143,0.2)', tileText: '#EFE7D6', statusBar: 'light',
     },
-    ui: { page: '#101217', card: '#1A1D24', text: '#ECE6DA', muted: '#9098A6', border: '#2B2F38', soft: '#262A33', primary: '#C9A96E', primaryText: '#1A1408', accent: '#E3C98F', danger: '#E08A7A', notice: '#2E2818', noticeText: '#F0DDB0', statusBar: 'light' },
+    ui: { page: '#202228', card: '#2C2F37', text: '#ECE6DA', muted: '#A3AAB6', border: '#40444E', soft: '#353943', primary: '#C9A96E', primaryText: '#1A1408', accent: '#E3C98F', danger: '#E08A7A', notice: '#3A3324', noticeText: '#F0DDB0', statusBar: 'light' },
     reader: {
-      page: '#14161B', header: '#0B0C10', headerBorder: '#2A2D35', heading: '#E8DCC0', text: '#DAD4C8', number: '#B39565',
-      highlight: 'rgba(227,201,143,0.22)', selected: 'rgba(255,255,255,0.09)', statusBar: 'light',
+      page: '#24272D', header: '#18191D', headerBorder: '#3A3E47', heading: '#E8DCC0', text: '#DAD4C8', number: '#B39565',
+      highlight: 'rgba(227,201,143,0.22)', selected: 'rgba(255,255,255,0.10)', statusBar: 'light',
     },
   },
   {
     id: 'pergamino', name: 'Pergamino', description: 'Claro y cálido, como papel antiguo.',
     home: {
-      page: '#F7F1E3', card: '#E8D9BA', title: '#F6E7C8', text: '#4A3826', muted: '#7D6649', accent: '#8E6130',
+      page: '#E8D9BA', card: '#E8D9BA', title: '#F6E7C8', text: '#4A3826', muted: '#7D6649', accent: '#8E6130',
       panel: 'rgba(255,255,255,0.55)', panelBorder: 'rgba(142,97,48,0.3)', panelText: '#3E2A17',
       tile: 'rgba(26,18,11,0.44)', tileBorder: 'rgba(238,223,196,0.26)', tileText: '#F5E8D2', statusBar: 'dark',
     },
-    ui: { page: '#FBF6EA', card: '#FFFDF7', text: '#3A2A18', muted: '#80694E', border: '#E8DCC5', soft: '#F1E6CF', primary: '#8E6130', primaryText: '#FFFFFF', accent: '#B88A4E', danger: '#9A4F3F', notice: '#FCEFC8', noticeText: '#6B4520', statusBar: 'dark' },
+    ui: { page: '#F5E9CF', card: '#EEDDB8', text: '#3A2A18', muted: '#6B5535', border: '#D2BB8C', soft: '#E9D6AE', primary: '#6E4A22', primaryText: '#FFFFFF', accent: '#7E5626', danger: '#9A4F3F', notice: '#FCEFC8', noticeText: '#6B4520', statusBar: 'dark' },
     reader: {
-      page: '#FBF6EA', header: '#7A5230', headerBorder: '#A57A4E', heading: '#4A3320', text: '#2E2317', number: '#9A6B35',
-      highlight: '#FCEFB4', selected: '#EFE2C6', statusBar: 'dark',
+      page: '#F6EBCF', header: '#7A5230', headerBorder: '#A57A4E', heading: '#4A3320', text: '#2E2317', number: '#7C5527',
+      highlight: '#FCEFB4', selected: '#EAD9B3', statusBar: 'dark',
     },
   },
   {
-    id: 'bosque', name: 'Bosque', description: 'Verde sereno con detalles dorados.',
+    id: 'bosque', name: 'Bosque', description: 'Pino profundo con ámbar y madera.',
     home: {
-      page: '#EEF1EA', card: '#1E3A2F', title: '#E6D6A8', text: '#D6E5DC', muted: '#9DB8A8', accent: '#E6D6A8',
-      panel: 'rgba(255,255,255,0.06)', panelBorder: 'rgba(230,214,168,0.26)', panelText: '#EFF3E6',
-      tile: 'rgba(12,20,15,0.42)', tileBorder: 'rgba(230,214,168,0.22)', tileText: '#F2EBD5', statusBar: 'dark',
+      page: '#1F4430', card: '#1F4430', title: '#E6B866', text: '#E3EFE2', muted: '#A9C6AE', accent: '#E6B866',
+      panel: 'rgba(255,255,255,0.07)', panelBorder: 'rgba(230,184,102,0.30)', panelText: '#F1EEDF', feature: '#163323',
+      tile: 'rgba(12,20,15,0.42)', tileBorder: 'rgba(230,184,102,0.24)', tileText: '#F1EEDF', statusBar: 'light',
     },
-    ui: { page: '#F1F4EE', card: '#FFFFFF', text: '#1F2A22', muted: '#627566', border: '#D8E1D6', soft: '#E4ECE1', primary: '#1E3A2F', primaryText: '#FFFFFF', accent: '#B59A58', danger: '#8E5447', notice: '#F3F0CF', noticeText: '#2E4A3C', statusBar: 'dark' },
+    ui: { page: '#E8EDDA', card: '#DAE3C8', text: '#1F2A22', muted: '#4B5946', border: '#B8C6A0', soft: '#D3DDBF', primary: '#1F4430', primaryText: '#FFFFFF', accent: '#744B22', danger: '#8E5447', notice: '#F6ECD2', noticeText: '#5A3D1C', statusBar: 'dark' },
     reader: {
-      page: '#F1F4EC', header: '#1E3A2F', headerBorder: '#35584A', heading: '#23382C', text: '#1F2A22', number: '#5C7B67',
-      highlight: '#F4F0C0', selected: '#DDE7D9', statusBar: 'dark',
+      page: '#EEF1DF', header: '#1F4430', headerBorder: '#7A5532', heading: '#1F4430', text: '#1F2A22', number: '#55704A',
+      highlight: '#F6EBC0', selected: '#DCE4CA', statusBar: 'dark',
     },
   },
   {
     id: 'vino', name: 'Vino', description: 'Burdeos elegante, estilo biblioteca antigua.',
     home: {
-      page: '#F5EDEA', card: '#3A1A24', title: '#E7C9A0', text: '#EBD9DD', muted: '#B99AA2', accent: '#E7C9A0',
-      panel: 'rgba(255,255,255,0.06)', panelBorder: 'rgba(231,201,160,0.26)', panelText: '#F6E9E2',
-      tile: 'rgba(20,8,12,0.42)', tileBorder: 'rgba(231,201,160,0.22)', tileText: '#F6E9E2', statusBar: 'dark',
+      page: '#52283A', card: '#52283A', title: '#E7C9A0', text: '#EBD9DD', muted: '#B99AA2', accent: '#E7C9A0',
+      panel: 'rgba(255,255,255,0.06)', panelBorder: 'rgba(231,201,160,0.26)', panelText: '#F6E9E2', feature: '#3A1A24',
+      tile: 'rgba(20,8,12,0.42)', tileBorder: 'rgba(231,201,160,0.22)', tileText: '#F6E9E2', statusBar: 'light',
     },
-    ui: { page: '#FAF4F1', card: '#FFFFFF', text: '#2E1F22', muted: '#806068', border: '#EADCDA', soft: '#F2E4E2', primary: '#5A2536', primaryText: '#FFFFFF', accent: '#B98A6A', danger: '#8E3F4F', notice: '#FBEBD5', noticeText: '#5A2536', statusBar: 'dark' },
+    ui: { page: '#F7E8E5', card: '#F0D7D2', text: '#2E1F22', muted: '#664850', border: '#D9B2AB', soft: '#EBCDC7', primary: '#5A2536', primaryText: '#FFFFFF', accent: '#71472D', danger: '#8E3F4F', notice: '#FBEBD5', noticeText: '#5A2536', statusBar: 'dark' },
     reader: {
-      page: '#FAF3EC', header: '#3A1A24', headerBorder: '#5E2E3C', heading: '#4A2430', text: '#2E1F22', number: '#8E5A66',
-      highlight: '#FBEFC0', selected: '#F0DEDC', statusBar: 'dark',
+      page: '#F8EAE3', header: '#3A1A24', headerBorder: '#5E2E3C', heading: '#4A2430', text: '#2E1F22', number: '#8E5A66',
+      highlight: '#FBEFC0', selected: '#EED2CB', statusBar: 'dark',
     },
   },
 ];

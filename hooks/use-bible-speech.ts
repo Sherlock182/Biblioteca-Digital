@@ -1,6 +1,6 @@
 import { buildSpeechQueue, prepareSpeech } from '@/constants/pdf-speech-text';
 import { displayBookName } from '@/constants/reading-history';
-import { fetchChapterContent } from '@/constants/scripture';
+import { fetchChapterContent, spokenChapterTitle } from '@/constants/scripture';
 import { loadSpanishVoices, loadSpeechSettings, speakWithFallback } from '@/constants/speech-engine';
 import { pickVoice } from '@/constants/speech-voices';
 import { ReaderAudio } from '@/modules/reader-audio';
@@ -32,8 +32,8 @@ const encode = (chapter: number, verse: number) => chapter * 1000 + verse;
 /** The book the background service is reading. Module-level so it survives moving to the next chapter screen. */
 let background: { session: number; collectionId: string; book: string; following: boolean } | null = null;
 
-const chapterPages = (book: string, chapter: number, verses: Verse[]) => [
-  { page: encode(chapter, 0), text: `${displayBookName(book)}, capítulo ${chapter}.` },
+const chapterPages = (collectionId: string, book: string, chapter: number, verses: Verse[]) => [
+  { page: encode(chapter, 0), text: spokenChapterTitle(collectionId, book, chapter) },
   ...verses.map(verse => ({ page: encode(chapter, verse.number), text: verse.text })),
 ];
 
@@ -131,7 +131,7 @@ export function useBibleSpeech(options: BibleSpeechOptions) {
   const readInForeground = useCallback(async (voiceId: string | null, rate: number, pitch: number) => {
     const session = foreground.current;
     const alive = () => session === foreground.current && mounted.current;
-    const { book, chapter, chapterCount, verses } = latest.current;
+    const { collectionId, book, chapter, chapterCount, verses } = latest.current;
     let voiceBroken = false;
     const say = async (text: string) => {
       for (const paragraph of prepareSpeech(text, MAX_CHARS)) {
@@ -143,7 +143,7 @@ export function useBibleSpeech(options: BibleSpeechOptions) {
       }
     };
     try {
-      await say(`${displayBookName(book)}, capítulo ${chapter}.`);
+      await say(spokenChapterTitle(collectionId, book, chapter));
       for (const verse of verses) {
         if (!alive()) return;
         setReadingVerse(verse.number); latest.current.showVerse(verse.number);
@@ -173,7 +173,7 @@ export function useBibleSpeech(options: BibleSpeechOptions) {
     }
     const alive = () => background?.session === session;
     if (!alive()) return;
-    const first = buildSpeechQueue(chapterPages(book, chapter, verses), MAX_CHARS);
+    const first = buildSpeechQueue(chapterPages(collectionId, book, chapter, verses), MAX_CHARS);
     await audio.start({ session, title: `${displayBookName(book)} · ${versionTitle}`, voiceId, rate, pitch, pageMode: 'bible' },
       { ...first, complete: chapter >= chapterCount });
     // The rest of the book goes to the service chapter by chapter, so it keeps reading with the screen off.
@@ -181,7 +181,7 @@ export function useBibleSpeech(options: BibleSpeechOptions) {
       if (!alive()) return;
       const content = await fetchChapterContent(collectionId, book, next, { tanakhLanguage: 'es' }).catch(() => ({ verses: [] as Verse[] }));
       if (!alive()) return;
-      await audio.append(session, { ...buildSpeechQueue(chapterPages(book, next, content.verses), MAX_CHARS), complete: next === chapterCount });
+      await audio.append(session, { ...buildSpeechQueue(chapterPages(collectionId, book, next, content.verses), MAX_CHARS), complete: next === chapterCount });
     }
   }, []);
 

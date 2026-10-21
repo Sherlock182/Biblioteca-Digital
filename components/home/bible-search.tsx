@@ -118,7 +118,7 @@ export function BibleSearch({ collectionId, theme, autoFocus = false, onActiveCh
           <Pressable key={verse.book + verse.chapter + ':' + verse.verse} accessibilityRole="button"
             onPress={() => onOpenVerse(verse.book, verse.chapter, verse.verse)}
             style={({ pressed }) => [styles.verse, { backgroundColor: ui.card, borderColor: ui.border }, pressed && styles.pressed]}>
-            <Text style={[styles.verseRef, { color: ui.primary }]}>{bookLabel(collectionId, verse.book)} {verse.chapter}:{verse.label}</Text>
+            <Text style={[styles.verseRef, { color: ui.primary }]}>{`${bookLabel(collectionId, verse.book)} ${verse.chapter}:${verse.label}`}</Text>
             <Text style={[styles.verseText, { color: ui.text }]} numberOfLines={4}>
               {highlightSegments(verse, words).map((segment, i) => segment.hit
                 ? <Text key={i} style={[styles.hit, { backgroundColor: theme.reader.highlight }]}>{segment.text}</Text>
@@ -140,7 +140,7 @@ export function BibleSearch({ collectionId, theme, autoFocus = false, onActiveCh
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: 12, gap: 10 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1.5, borderRadius: 14, paddingLeft: 12, paddingRight: 6, minHeight: 48 },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1.5, borderRadius: 12, paddingLeft: 12, paddingRight: 6, minHeight: 48 },
   input: { flex: 1, fontSize: 15, paddingVertical: 10 },
   clear: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   results: { gap: 14 },

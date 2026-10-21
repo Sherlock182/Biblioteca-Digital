@@ -5,7 +5,8 @@ export type SacredBook = {
   title: string;
   shortName: string;
   subtitle: string;
-  icon: string;
+  /** Drawing on the cover's seal. */
+  icon: 'cross' | 'church' | 'open-book' | 'book' | 'globe' | 'flame';
   colors: {
     cover: string;
     spine: string;
@@ -15,6 +16,21 @@ export type SacredBook = {
 };
 
 export type TestamentType = 'antiguo' | 'nuevo';
+
+/** How a chapter is named: "Juan 3". */
+export function chapterTitle(collectionId: string | null | undefined, book: string, chapter: number) {
+  return `${displayBookName(book)} ${chapter}`;
+}
+
+/** A verse reference: "Juan 3:16". */
+export function verseReference(collectionId: string | null | undefined, book: string, chapter: number, verse: number | string) {
+  return `${displayBookName(book)} ${chapter}:${verse}`;
+}
+
+/** What the voice says before reading a chapter. */
+export function spokenChapterTitle(collectionId: string | null | undefined, book: string, chapter: number) {
+  return `${displayBookName(book)}, capítulo ${chapter}.`;
+}
 
 export type VerseLine = {
   number: number;
@@ -420,7 +436,7 @@ export const SACRED_BOOKS: SacredBook[] = [
     title: 'Biblia Reina Valera 1960',
     shortName: 'RV 1960',
     subtitle: 'Versión clásica en español',
-    icon: '✝',
+    icon: 'cross',
     colors: { cover: '#143D59', spine: '#0A2233', text: '#E7F5FF' },
     books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
   },
@@ -429,7 +445,7 @@ export const SACRED_BOOKS: SacredBook[] = [
     title: 'Biblia Católica Platense',
     shortName: 'Platense',
     subtitle: 'Versión de Mons. Juan Straubinger (1948)',
-    icon: '⛪',
+    icon: 'church',
     colors: { cover: '#4B2E83', spine: '#2A184B', text: '#F4EEFF' },
     books: ['Génesis', 'Éxodo', 'Salmos', 'Sabiduría', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
   },
@@ -438,11 +454,44 @@ export const SACRED_BOOKS: SacredBook[] = [
     title: 'Nueva Biblia Viva',
     shortName: 'NBV',
     subtitle: 'Español actual, fácil de leer',
-    icon: '📖',
+    icon: 'open-book',
     colors: { cover: '#1F5E5B', spine: '#113A38', text: '#E8FFF9' },
     books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
   },
+  {
+    id: 'lbla',
+    title: 'La Biblia de las Américas',
+    shortName: 'LBLA',
+    subtitle: 'Traducción fiel y literal',
+    icon: 'globe',
+    colors: { cover: '#7A1F2B', spine: '#4A1119', text: '#FFEDEE' },
+    books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
+  },
+  {
+    id: 'rvc',
+    title: 'Reina Valera Contemporánea',
+    shortName: 'RVC',
+    subtitle: 'La Reina-Valera en español actual',
+    icon: 'book',
+    colors: { cover: '#6B4423', spine: '#422814', text: '#FFF3E2' },
+    books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
+  },
+  {
+    id: 'nvi',
+    title: 'Nueva Versión Internacional',
+    shortName: 'NVI',
+    subtitle: 'Clara y cercana al original',
+    icon: 'flame',
+    colors: { cover: '#2F3B4C', spine: '#1A2230', text: '#EEF3FA' },
+    books: ['Genesis', 'Exodo', 'Salmos', 'Isaias', 'Mateo', 'Juan', 'Romanos', 'Apocalipsis'],
+  },
 ];
+
+/** Bibles with the 66 books, listed as Old and New Testament. */
+const STANDARD_CANON = new Set(['rv1960', 'nbv', 'lbla', 'rvc', 'nvi']);
+
+/** True for a Bible whose books are listed by Old and New Testament (the Catholic one too). */
+export const hasTestaments = (collectionId?: string | null) => !!collectionId && (STANDARD_CANON.has(collectionId) || collectionId === 'catolica');
 
 const LOCAL_CHAPTER_CONTENT: Record<string, ChapterContent> = {};
 
@@ -459,11 +508,7 @@ export function getBooksForCollection(collectionId?: string | null, testament: T
     return [] as string[];
   }
 
-  if (collectionId === 'rv1960') {
-    return testament === 'antiguo' ? OLD_TESTAMENT_BOOKS : NEW_TESTAMENT_BOOKS;
-  }
-
-  if (collectionId === 'nbv') {
+  if (STANDARD_CANON.has(collectionId)) {
     return testament === 'antiguo' ? OLD_TESTAMENT_BOOKS : NEW_TESTAMENT_BOOKS;
   }
 
@@ -511,6 +556,10 @@ const LOCAL_BIBLE_FILES: Record<string, () => LocalBible> = {
   // Biblia Platense (Mons. Juan Straubinger, La Plata 1948), Catholic, public domain; from CrossWire.
   // Vulgate versification: Esther 16 and Daniel 14 chapters, Psalms numbered as in the Vulgate.
   catolica: () => require('../assets/data/biblia-catolica-platense.json'),
+  // From https://github.com/mrk214/bible-data-es-spa, built by scripts/generate-bible-json.js.
+  lbla: () => require('../assets/data/biblia-lbla.json'),
+  rvc: () => require('../assets/data/biblia-rvc.json'),
+  nvi: () => require('../assets/data/biblia-nvi.json'),
 };
 const loadedBibles: Record<string, LocalBible> = {};
 function getLocalBible(collectionId: string): LocalBible | undefined {
@@ -530,13 +579,25 @@ function getRv1960Index() {
 export const COLLECTION_CREDITS: Record<string, string> = {
   nbv: 'Nueva Biblia Viva © 2008 Biblica, Inc. · Biblica® Open, licencia CC BY-SA 4.0',
   catolica: 'Biblia Platense · Mons. Juan Straubinger (1948) · Dominio público',
+  lbla: 'La Biblia de las Américas © 1986, 1995, 1997 The Lockman Foundation',
+  rvc: 'Reina Valera Contemporánea™ © Sociedades Bíblicas Unidas, 2009, 2010',
+  nvi: 'Nueva Versión Internacional® NVI® © 1999, 2015, 2022 Biblica, Inc.',
 };
 
 /** Chapter count of a book in a given Bible (Catholic Daniel has 14, for example). */
 export function getCollectionChapterCount(collectionId: string | null | undefined, book?: string | null) {
   if (!book) return 0;
+  // The 66-book Bibles all have the chapters of BOOK_CHAPTERS (checked against their files): counting
+  // them needs no whole Bible in memory, so a book list opens at once.
+  if (collectionId && STANDARD_CANON.has(collectionId) && BOOK_CHAPTERS[book]) return BOOK_CHAPTERS[book];
   const local = collectionId ? getLocalBible(collectionId)?.[book] : undefined;
   return local ? local.length : getChapterCount(book);
+}
+
+/** Loads a Bible's text ahead of time (while the cover opens), so its first chapter shows without a wait. */
+export function preloadCollection(collectionId: string) {
+  if (collectionId === 'rv1960') getRv1960Index();
+  else getLocalBible(collectionId);
 }
 
 function getLocalBibleChapter(collectionId: string, book: string, chapter: number): ChapterContent {
@@ -552,7 +613,7 @@ function getLocalBibleChapter(collectionId: string, book: string, chapter: numbe
     const previous = verses[verses.length - 1];
     if (previous) previous.label = previous.number + '-' + (i + 1);
   });
-  return { source: 'local', verses, heading: `${displayBookName(book)} ${chapter}` };
+  return { source: 'local', verses, heading: chapterTitle(collectionId, book, chapter) };
 }
 
 // ── RV1960 local (empaquetada en la app, sin internet) ─────────────────────

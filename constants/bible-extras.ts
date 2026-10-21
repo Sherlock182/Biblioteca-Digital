@@ -6,6 +6,8 @@
  *   (Biblica® Open NBV 2008, CC BY-SA 4.0), built by scripts/generate-nbv.js.
  * - Reina-Valera 1960: section headings, psalm titles and the letters of Psalm 119, built by
  *   scripts/generate-rv1960-titulos.js.
+ * - LBLA, RVC and NVI: section headings, psalm titles, the letters of Psalm 119 and the speakers of the
+ *   Song of Songs, built by scripts/generate-bible-json.js.
  */
 
 /** M major section, S section, D psalm title, P who is speaking (Song of Songs). */
@@ -22,10 +24,19 @@ const FILES: Record<string, () => ExtrasFile> = {
   catolica: () => require('../assets/data/platense-notas.json'),
   nbv: () => require('../assets/data/nbv-titulos.json'),
   rv1960: () => require('../assets/data/rv1960-titulos.json'),
+  lbla: () => require('../assets/data/lbla-titulos.json'),
+  rvc: () => require('../assets/data/rvc-titulos.json'),
+  nvi: () => require('../assets/data/nvi-titulos.json'),
 };
 const loaded: Record<string, ExtrasFile> = {};
 
 export const hasChapterExtras = (collectionId: string) => collectionId in FILES;
+
+/** Loads a Bible's headings ahead of time, together with its text (see preloadCollection). */
+export function preloadChapterExtras(collectionId: string) {
+  const load = FILES[collectionId];
+  if (load) loaded[collectionId] ??= load();
+}
 
 /** Headings and notes of one chapter, by verse number (empty for a Bible without them). */
 export function getChapterExtras(collectionId: string, book: string, chapter: number): Record<number, VerseExtras> {

@@ -149,8 +149,10 @@ function convertBook(usfm) {
 function polish(text) {
   return text
     .replace(new RegExp(String.fromCharCode(0x2006), 'g'), '')                   // hair space between nested quotes (’ ”): some fonts draw it as a box
-    .replace(/\ba el Señor\b/g, 'al Señor')     // "a el Señor" left by the YHWH → Señor replacement
-    .replace(/\bde el Señor\b/g, 'del Señor')
+    // "a el Señor" left by the YHWH → Señor replacement. (?<!\p{L}) rather than \b, which takes an
+    // accented letter for a word boundary and turned "día el Señor" into "díal Señor".
+    .replace(/(?<!\p{L})a el Señor\b/gu, 'al Señor')
+    .replace(/(?<!\p{L})de el Señor\b/gu, 'del Señor')
     .replace(/ +([,.;:!?)”])/g, '$1')            // no space before closing punctuation
     .replace(/ +»(?=[\s,.;:!?)]|$)/g, '»')       // » closing a quote (a » before a word opens a new paragraph of it)
     .replace(/([(«“¿¡]) +/g, '$1');              // no space after opening punctuation

@@ -24,6 +24,8 @@ import {
     fetchChapterContent,
     getBooksForCollection,
     getCollectionChapterCount,
+    hasTestaments,
+    verseReference,
     getCollectionById,
     type ChapterContent,
     type CollectionBookListItem,
@@ -116,9 +118,8 @@ export default function ChapterReaderScreen() {
   return <ChapterReaderContent key={readingKey} />;
 }
 
-/** The reader's styles recolored for the chosen theme; the classic theme is the original design. */
+/** The reader's styles recolored for the chosen theme. */
 function themeReaderStyles(theme: AppTheme): typeof baseStyles {
-  if (theme.id === 'clasico') return baseStyles;
   const ui = theme.ui;
   const overrides: Partial<Record<keyof typeof baseStyles, object>> = {
     listenButtonActive: { backgroundColor: 'rgba(255,255,255,0.32)', borderColor: '#F6EFD2' },
@@ -126,7 +127,8 @@ function themeReaderStyles(theme: AppTheme): typeof baseStyles {
     languageToggleButtonActive: { backgroundColor: 'rgba(255,255,255,0.22)', borderColor: '#F6EFD2' },
     overlayBg: { backgroundColor: 'rgba(0,0,0,0.5)' },
     panelCard: { backgroundColor: ui.page, borderColor: ui.border },
-    panelTitle: { color: ui.text }, panelSub: { color: ui.muted },
+    panelHeader: { backgroundColor: ui.primary },
+    panelTitle: { color: ui.primaryText }, panelSub: { color: ui.primaryText, opacity: 0.8 },
     panelClose: { backgroundColor: ui.soft }, panelCloseText: { color: ui.text },
     testamentButton: { backgroundColor: ui.card, borderColor: ui.border },
     testamentButtonActive: { backgroundColor: ui.primary, borderColor: ui.primary },
@@ -220,7 +222,7 @@ function ChapterReaderContent() {
       inlineNumber: { color: colors.number, fontSize: 12 * scale, fontWeight: '700' as const },
     };
   }, [settings.readerFont, settings.textScale, theme]);
-  const optionIcon = theme.id === 'clasico' ? '#F6EFD2' : theme.ui.primaryText;
+  const optionIcon = theme.ui.primaryText;
   const [bookPickerOpen, setBookPickerOpen] = useState(false);
   const [chapterPickerBook, setChapterPickerBook] = useState<string | null>(null);
   const [chapterPickerFromHeader, setChapterPickerFromHeader] = useState(false);
@@ -229,7 +231,7 @@ function ChapterReaderContent() {
   const [tanakhLanguage, setTanakhLanguage] = useState<TanakhLanguage>(tanakhLanguageParam === 'he' ? 'he' : 'es');
 
   // Bibles organized in Old / New Testament.
-  const isRv1960 = collection?.id === 'rv1960' || collection?.id === 'nbv' || collection?.id === 'catolica';
+  const isRv1960 = hasTestaments(collection?.id);
   const isJewishCollection = collection?.id === 'jewish';
   const isCompactCollection = collection?.id === 'jewish' || collection?.id === 'catolica';
   const isHebrewTanakh = isJewishCollection && tanakhLanguage === 'he';
@@ -243,6 +245,7 @@ function ChapterReaderContent() {
 
     return TANAKH_HEBREW_BOOK_LABELS[bookName] ?? bookName;
   };
+  const headerBookName = getDisplayBookName(book);
 
   const getDisplaySectionName = (label: string) => {
     if (!isHebrewTanakh) {
@@ -283,7 +286,7 @@ function ChapterReaderContent() {
       return getCatholicBookList(bookPickerTestament);
     }
 
-    if (collection.id === 'rv1960' || collection.id === 'nbv') {
+    if (collection.id !== 'catolica' && hasTestaments(collection.id)) {
       return getBooksForCollection(collection.id, bookPickerTestament).map((item) => ({
         type: 'book' as const,
         label: item,
@@ -420,7 +423,9 @@ function ChapterReaderContent() {
       rv1960: 'Reina-Valera 1960',
       jewish: isHebrewTanakh ? 'TaNakh Hebreo (Masorético)' : 'TaNakh',
       nbv: 'Nueva Biblia Viva (NBV)',
-      quran: 'El Corán',
+      lbla: 'La Biblia de las Américas (LBLA)',
+      rvc: 'Reina Valera Contemporánea (RVC)',
+      nvi: 'Nueva Versión Internacional (NVI)',
       catolica: 'Biblia Platense (Straubinger)',
     };
     const versionLabel = versionLabelByCollectionId[collection?.id ?? '']
@@ -644,7 +649,7 @@ function ChapterReaderContent() {
             <View style={styles.chapterTitleRow}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Libro: ${getDisplayBookName(book)}. Cambiar de libro`}
+                accessibilityLabel={`Libro: ${headerBookName}. Cambiar de libro`}
                 onPress={() => setBookPickerOpen(true)}
                 style={({ pressed }) => [styles.bookSelectorButton, pressed && styles.headerPressed]}>
                 <Text
@@ -652,7 +657,7 @@ function ChapterReaderContent() {
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
                   style={[styles.chapterTitle, isCompactCollection && styles.chapterTitleCompact, isHebrewTanakh && styles.chapterTitleHebrew]}>
-                  {getDisplayBookName(book)}
+                  {headerBookName}
                 </Text>
                 <MaterialIcons name="expand-more" size={20} color="#E9D9B8" />
               </Pressable>
@@ -848,7 +853,7 @@ function ChapterReaderContent() {
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Seleccionar libro</Text>
               <Pressable style={styles.panelClose} onPress={() => setBookPickerOpen(false)}>
-                <Text style={styles.panelCloseText}>✕</Text>
+                <MaterialIcons name="close" size={20} color={StyleSheet.flatten(styles.panelCloseText).color as string} />
               </Pressable>
             </View>
 
@@ -903,7 +908,7 @@ function ChapterReaderContent() {
                     style={[styles.panelBookRow, isCompactCollection && styles.panelBookRowCompact]}
                     onPress={() => onSelectBookFromHeader(item.book)}>
                     <Text numberOfLines={2} style={[styles.panelBookText, isCompactCollection && styles.panelBookTextCompact, isHebrewTanakh && styles.panelBookTextHebrew]}>{itemLabel}</Text>
-                    <Text style={styles.panelBookArrow}>›</Text>
+                    <MaterialIcons name="chevron-right" size={22} color={StyleSheet.flatten(styles.panelBookArrow).color as string} />
                   </Pressable>
                 );
               })}
@@ -935,7 +940,7 @@ function ChapterReaderContent() {
                 setChapterPickerBook(null);
                 setChapterPickerFromHeader(false);
               }}>
-                <Text style={styles.panelCloseText}>✕</Text>
+                <MaterialIcons name="close" size={20} color={StyleSheet.flatten(styles.panelCloseText).color as string} />
               </Pressable>
             </View>
 
@@ -1050,10 +1055,12 @@ function ChapterReaderContent() {
         <View style={styles.overlayWrap}>
           <Pressable style={styles.overlayBg} onPress={() => setSearchOpen(false)} />
           <View style={[styles.searchSheet, { backgroundColor: theme.ui.page, paddingTop: 14 }]}>
-            <View style={styles.panelHeader}>
+            {/* Plain title and a small close, so the search field stays the focus of the sheet. */}
+            <View style={styles.searchHeader}>
               <Text style={[styles.panelTitle, { color: theme.ui.text }]}>Buscar en {collection?.shortName ?? 'esta Biblia'}</Text>
-              <Pressable style={styles.panelClose} accessibilityLabel="Cerrar búsqueda" onPress={() => setSearchOpen(false)}>
-                <Text style={styles.panelCloseText}>✕</Text>
+              <Pressable style={({ pressed }) => [styles.searchClose, pressed && { opacity: 0.6 }]} accessibilityRole="button"
+                accessibilityLabel="Cerrar búsqueda" hitSlop={6} onPress={() => setSearchOpen(false)}>
+                <MaterialIcons name="close" size={24} color={theme.ui.muted} />
               </Pressable>
             </View>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: sheetBottom }} showsVerticalScrollIndicator={false}>
@@ -1076,15 +1083,15 @@ function ChapterReaderContent() {
         <View style={styles.overlayWrap}>
           <Pressable style={styles.overlayBg} onPress={() => setNoteVerse(null)} />
           <View style={[styles.noteSheet, { backgroundColor: theme.reader.page, paddingBottom: sheetBottom }]}>
-            <View style={styles.panelHeader}>
+            <View style={[styles.panelHeader, styles.noteHeader]}>
               <View style={styles.noteHeaderText}>
                 <Text style={[styles.noteKicker, { color: theme.reader.number }]}>{NOTE_SOURCES[collectionId]?.title ?? 'NOTA'}</Text>
                 <Text style={[styles.panelTitle, { color: theme.reader.heading }]}>
-                  {noteVerse !== null ? `${getDisplayBookName(book)} ${chapterValue}:${noteVerse}` : ''}
+                  {noteVerse !== null ? verseReference(collection?.id, book, chapterValue, noteVerse) : ''}
                 </Text>
               </View>
               <Pressable style={styles.panelClose} accessibilityLabel="Cerrar nota" onPress={() => setNoteVerse(null)}>
-                <Text style={styles.panelCloseText}>✕</Text>
+                <MaterialIcons name="close" size={20} color={StyleSheet.flatten(styles.panelCloseText).color as string} />
               </Pressable>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.noteBody}>
@@ -1195,7 +1202,7 @@ const baseStyles = StyleSheet.create({
     minWidth: 0,
     paddingLeft: 6,
     paddingRight: 2,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   collectionLabel: {
     fontSize: 11,
@@ -1322,7 +1329,7 @@ const baseStyles = StyleSheet.create({
   },
   verseRowSelected: {
     backgroundColor: '#EADBBC',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 8,
     borderBottomColor: '#B98A50',
   },
@@ -1392,7 +1399,7 @@ const baseStyles = StyleSheet.create({
   },
   emptyState: {
     marginTop: 20,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#DCCFB3',
     backgroundColor: '#F3E8CC',
@@ -1464,7 +1471,7 @@ const baseStyles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#2F1E12',
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -1494,7 +1501,7 @@ const baseStyles = StyleSheet.create({
   optionsCard: {
     marginHorizontal: 18,
     marginBottom: 26,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#5C3E24',
     backgroundColor: '#D2B48C',
@@ -1548,12 +1555,13 @@ const baseStyles = StyleSheet.create({
     flex: 0,
   },
   noteSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingTop: 16,
     paddingHorizontal: 18,
     maxHeight: '80%',
   },
+  noteHeader: { backgroundColor: 'transparent', paddingHorizontal: 0 },
   noteHeaderText: {
     flex: 1,
     gap: 2,
@@ -1588,11 +1596,13 @@ const baseStyles = StyleSheet.create({
     marginTop: 4,
   },
   searchSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingHorizontal: 16,
     height: '88%',
   },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 4, marginBottom: 8 },
+  searchClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   optionsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1693,7 +1703,7 @@ const baseStyles = StyleSheet.create({
   },
   testamentButton: {
     flex: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E0E0E0',
     backgroundColor: '#FFFFFF',
@@ -1761,7 +1771,7 @@ const baseStyles = StyleSheet.create({
   chapterChip: {
     width: 52,
     height: 42,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,

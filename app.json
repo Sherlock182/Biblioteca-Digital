@@ -4,7 +4,7 @@
     "slug": "APP",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/biblioteca-paloma-icon.png",
+    "icon": "./assets/images/paloma-cielo-icon.png",
     "scheme": "app",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -18,7 +18,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/biblioteca-paloma-adaptive-foreground.png"
+        "foregroundImage": "./assets/images/paloma-cielo-adaptive-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.sherlock22.APP",
@@ -29,14 +29,14 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/biblioteca-paloma-favicon.png"
+      "favicon": "./assets/images/paloma-cielo-favicon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/biblioteca-paloma-splash.png",
+          "image": "./assets/images/splash-paloma-cielo.png",
           "imageWidth": 240,
           "resizeMode": "contain",
           "backgroundColor": "#FFFFFF",
@@ -45,7 +45,14 @@
           }
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
